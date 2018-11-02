@@ -102,10 +102,14 @@ int main(int argc, char *argv[])
   std::map<int, acl_msgs::ViconState> pastStateMessages;
 
   while (true){
-    // Wait for mocap packet
-    mocap_.spin();
+    // Wait for data description     
+    // mocap_.getCommandPacket();
 
-    std::vector<agile::Packet> mocap_packets = mocap_.getPackets();
+    // Wait for mocap Data packet
+    mocap_.getDataPacket();
+    
+    std::vector<agile::Packet> mocap_packets;
+    mocap_packets = mocap_.getPackets();
 
     for (agile::Packet mocap_packet : mocap_packets){
 
@@ -131,7 +135,8 @@ int main(int argc, char *argv[])
 
       // Initialize publisher for rigid body if not exist.
       if (!hasPreviousMessage){
-        std::string topic = "/" + mocap_packet.model_name + "/vicon";
+        // std::string topic = "/" + mocap_packet.model_name + "/vicon";
+        std::string topic = "/" + std::to_string(mocap_packet.rigid_body_id) + "/vicon";
 
         publisher = n.advertise<acl_msgs::ViconState>(topic, 1);
         rosPublishers[mocap_packet.rigid_body_id] = publisher;

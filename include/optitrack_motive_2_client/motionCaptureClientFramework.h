@@ -110,7 +110,9 @@ public:
     bool initConnection();
 
     // Blocking call that waits for a mocap packet to arrive. Then returns.
-    void spin();
+    void getDataPacket();
+
+    void getCommandPacket();
 
     bool isOK() {return ok_;}
 

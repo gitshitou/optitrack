@@ -28,7 +28,7 @@ bool motionCaptureClientFramework::initConnection() {
 
   // ================ Create "Command" socket
   unsigned short port = 8000;
-  auto CommandSocket = CreateCommandSocket(inet_addr(my_address), port);
+  CommandSocket = CreateCommandSocket(inet_addr(my_address), port);
   if (CommandSocket == -1) {
   // error
     printf("Command socket creation error\n");
@@ -96,7 +96,7 @@ bool motionCaptureClientFramework::initConnection() {
   setDataSocket(DataSocket);
 
   // ================ Server address for commands
-  sockaddr_in HostAddr;
+  // sockaddr_in HostAddr;
 
   memset(&HostAddr, 0, sizeof(HostAddr));
   HostAddr.sin_family = AF_INET;
@@ -209,7 +209,7 @@ void motionCaptureClientFramework::DecodeMarkerID(int sourceID, int *pOutEntityI
 }
 
 // Data listener thread. Listens for incoming bytes from NatNet
-void motionCaptureClientFramework::spin() {
+void motionCaptureClientFramework::getDataPacket() {
   char szData[20000];
   socklen_t addr_len = sizeof(struct sockaddr);
   sockaddr_in TheirAddress{};
@@ -234,6 +234,40 @@ void motionCaptureClientFramework::spin() {
     }*/
 }
 
+
+void motionCaptureClientFramework::getCommandPacket() {
+    agile::sPacket PacketOut{};
+    PacketOut.iMessage = NAT_REQUEST_MODELDEF;  //NAT_FRAMEOFDATA;     //NAT_REQUEST_MODELDEF;
+    PacketOut.nDataBytes = 0;
+    ssize_t iRet = sendto(CommandSocket,
+                        (char *) &PacketOut,
+                        4 + PacketOut.nDataBytes,
+                        0,
+                        (sockaddr *) &HostAddr,
+                        sizeof(HostAddr));
+      // Wait for server response. 
+      // This will contain the server tick frequency.
+    char ip_as_str[INET_ADDRSTRLEN];
+    ssize_t nDataBytesReceived;
+    sockaddr_in TheirAddress{};
+    agile::sPacket PacketIn{};
+    socklen_t addr_len = sizeof(struct sockaddr);
+    char szData[20000]; //@Todo: this value is hard-coded
+    nDataBytesReceived = recvfrom(CommandSocket,
+                                    szData,
+                                    sizeof(szData),
+                                    0,
+                                    (struct sockaddr *) &TheirAddress,
+                                    &addr_len);
+
+      // debug - print message
+      
+/*      inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
+      printf("[Client] Received command from %s: iMessage=%d, nDataBytes=%d\n",
+            ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);*/
+      // processedPackets_.clear();
+      Unpack(szData, processedPackets_);
+}
 
 
 
@@ -290,35 +324,35 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 
   // printf("Begin Packet\n-------\n");
 
-  output_packet_ = Packet();
-  output_packet_.receive_timestamp = getTimestamp();
+  uint64_t receiveTimestamp = getTimestamp();
   // First 2 Bytes is message ID
   int MessageID = 0;
   memcpy(&MessageID, ptr, 2);
   ptr += 2;
 
-  output_packet_.message_id = MessageID;
 
   // Second 2 Bytes is the size of the packet
   int nBytes = 0;
   memcpy(&nBytes, ptr, 2);
   ptr += 2;
 
+  // printf("Message ID: %d\n", MessageID);
+  
+  // std::cout <<"MessageID= "<<MessageID<<std::endl;
   if (MessageID == 7)      // FRAME OF MOCAP DATA packet
   {
+    // printf("Starting mocap data packet\n");
     // Next 4 Bytes is the frame number
     int frameNumber = 0;
     memcpy(&frameNumber, ptr, 4);
     ptr += 4;
     // printf("Frame # : %d\n", frameNumber);
 
-    output_packet_.frame_number = frameNumber;
 
     // Next 4 Bytes is the number of data sets (markersets, rigidbodies, etc)
     int nMarkerSets = 0;
     memcpy(&nMarkerSets, ptr, 4);
     ptr += 4;
-    // printf("Marker Set Count : %d\n", nMarkerSets);
 
     // Loop through number of marker sets and get name and data
     for (int i = 0; i < nMarkerSets; i++) {
@@ -381,6 +415,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       int ID = 0;
       memcpy(&ID, ptr, 4);
       ptr += 4;
+      // printf("Rigid body ID: %d\n", ID);
       float x = 0.0f;
       memcpy(&x, ptr, 4);
       ptr += 4;
@@ -405,6 +440,11 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       // printf("ID : %d\n", ID);
       // printf("pos: [%3.2f,%3.2f,%3.2f]\n", x, y, z);
       // printf("ori: [%3.2f,%3.2f,%3.2f,%3.2f]\n", qx, qy, qz, qw);
+
+      output_packet_ = Packet();
+      output_packet_.receive_timestamp = receiveTimestamp;
+      output_packet_.message_id = MessageID;
+      output_packet_.frame_number = frameNumber;
 
       output_packet_.rigid_body_id = ID;
       output_packet_.pos[0] = x;
@@ -494,6 +534,8 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           // printf("Tracking Valid: False\n");
         }
       }
+
+      outputs.push_back(output_packet_);
 
     } // Go to next rigid body
 
@@ -616,7 +658,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
             ptr += 2;
             // 0x01 : rigid body was successfully tracked in this frame
             bool bTrackingValid = params & 0x01;
-            output_packet_.tracking_valid = bTrackingValid;
+            // output_packet_.tracking_valid = bTrackingValid;
           }
 
         } // next rigid body
@@ -624,13 +666,10 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       } // next skeleton
     }
 
-    // labeled markers (NatNet version 2.3 and later)
     if (((major == 2) && (minor >= 3)) || (major > 2)) {
       int nLabeledMarkers = 0;
       memcpy(&nLabeledMarkers, ptr, 4);
       ptr += 4;
-      // printf("Labeled Marker Count : %d\n", nLabeledMarkers);
-      output_packet_.labeled_marker_count = nLabeledMarkers;
 
       // Loop through labeled markers
       for (int j = 0; j < nLabeledMarkers; j++) {
@@ -640,8 +679,8 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         //   ID = ActiveID, correlates to RB ActiveLabels list
         // Passive Markers:
         //   If Asset with Legacy Labels
-        //      AssetID 	(Hi Word)
-        //      MemberID	(Lo Word)
+        //      AssetID   (Hi Word)
+        //      MemberID  (Lo Word)
         //   Else
         //      PointCloud ID
         int ID = 0;
@@ -649,7 +688,6 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         ptr += 4;
         int modelID, markerID;
         DecodeMarkerID(ID, &modelID, &markerID);
-
 
         // x
         float x = 0.0f;
@@ -707,7 +745,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         marker_.y = y;
         marker_.z = z;
 
-        output_packet_.markers_.push_back(marker_);
+        // output_packet_.markers_.push_back(marker_);
         // printf("ID  : [MarkerID: %d] [ModelID: %d]\n", markerID, modelID);
         // printf("pos : [%3.2f,%3.2f,%3.2f]\n", x, y, z);
         // printf("size: [%3.2f]\n", size);
@@ -816,7 +854,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
     }
 
     // Convert to microseconds
-    output_packet_.timestamp = (timestamp*1e9)/server_frequency;
+    uint64_t ms_timestamp = (timestamp*1e9)/server_frequency;
     // printf("Timestamp : %3.3f\n", timestamp);
 
     // high res timestamps (version 3.0 and later)
@@ -838,11 +876,13 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       ptr += 8;
       // printf("Transmit timestamp : %" PRIu64 "\n", transmitTimestamp);
 
-      // Convert timestamps to microseconds and save them in the output packet
-
-      output_packet_.mid_exposure_timestamp = (cameraMidExposureTimestamp*1e9)/server_frequency;
-      output_packet_.camera_data_received_timestamp = (cameraDataReceivedTimestamp*1e9)/server_frequency;
-      output_packet_.transmit_timestamp = (transmitTimestamp*1e9)/server_frequency;
+      // Convert timestamps to microseconds and save them in the output packets
+      for(int i = 0; i < outputs.size(); i++){
+        outputs[i].timestamp = ms_timestamp;
+        outputs[i].mid_exposure_timestamp = (cameraMidExposureTimestamp*1e9)/server_frequency;
+        outputs[i].camera_data_received_timestamp = (cameraDataReceivedTimestamp*1e9)/server_frequency;
+        outputs[i].transmit_timestamp = (transmitTimestamp*1e9)/server_frequency; 
+      }
     }
 
     // frame params
@@ -861,20 +901,25 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
     ptr += 4;
     // printf("End Packet\n-------------\n");
 
-  } else if (MessageID == 5) // Data Descriptions
+  } else if (MessageID == 5) // Data Descriptions ####################################################################3
   {
+    std::cout<<"Test"<<std::endl;    
+    bool print_info=0;
     // number of datasets
     int nDatasets = 0;
     memcpy(&nDatasets, ptr, 4);
     ptr += 4;
+    if(print_info)
     printf("Dataset Count : %d\n", nDatasets);
 
     for (int i = 0; i < nDatasets; i++) {
+      if(print_info)
       printf("Dataset %d\n", i);
 
       int type = 0;
       memcpy(&type, ptr, 4);
       ptr += 4;
+      if(print_info)
       printf("Type : %d\n", type);
 
       if (type == 0)   // markerset
@@ -884,12 +929,14 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         strcpy(szName, ptr);
         int nDataBytes = (int) strlen(szName) + 1;
         ptr += nDataBytes;
+        if(print_info)
         printf("Markerset Name: %s\n", szName);
 
         // marker data
         int nMarkers = 0;
         memcpy(&nMarkers, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("Marker Count : %d\n", nMarkers);
 
         for (int j = 0; j < nMarkers; j++) {
@@ -897,6 +944,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           strcpy(szName, ptr);
           int nDataBytes = (int) strlen(szName) + 1;
           ptr += nDataBytes;
+          if(print_info)
           printf("Marker Name: %s\n", szName);
         }
       } else if (type == 1)   // rigid body
@@ -906,32 +954,38 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           char szName[MAX_NAMELENGTH];
           strcpy(szName, ptr);
           ptr += strlen(ptr) + 1;
+          if(print_info)
           printf("Name: %s\n", szName);
         }
 
         int ID = 0;
         memcpy(&ID, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("ID : %d\n", ID);
 
         int parentID = 0;
         memcpy(&parentID, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("Parent ID : %d\n", parentID);
 
         float xoffset = 0;
         memcpy(&xoffset, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("X Offset : %3.2f\n", xoffset);
 
         float yoffset = 0;
         memcpy(&yoffset, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("Y Offset : %3.2f\n", yoffset);
 
         float zoffset = 0;
         memcpy(&zoffset, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("Z Offset : %3.2f\n", zoffset);
 
         // Per-marker data (NatNet 3.0 and later)
@@ -955,14 +1009,16 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           for (int markerIdx = 0; markerIdx < nMarkers; ++markerIdx) {
             float *markerPosition = markerPositions + markerIdx * 3;
             const int markerRequiredLabel = markerRequiredLabels[markerIdx];
-
+            if(print_info)
             printf("\tMarker #%d:\n", markerIdx);
+            if(print_info)
             printf("\t\tPosition: %.2f, %.2f, %.2f\n",
                    markerPosition[0],
                    markerPosition[1],
                    markerPosition[2]);
 
             if (markerRequiredLabel != 0) {
+              if(print_info)
               printf("\t\tRequired active label: %d\n", markerRequiredLabel);
             }
           }
@@ -975,16 +1031,19 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         char szName[MAX_NAMELENGTH];
         strcpy(szName, ptr);
         ptr += strlen(ptr) + 1;
+        if(print_info)
         printf("Name: %s\n", szName);
 
         int ID = 0;
         memcpy(&ID, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("ID : %d\n", ID);
 
         int nRigidBodies = 0;
         memcpy(&nRigidBodies, ptr, 4);
         ptr += 4;
+        if(print_info)
         printf("RigidBody (Bone) Count : %d\n", nRigidBodies);
 
         for (int i = 0; i < nRigidBodies; i++) {
@@ -993,45 +1052,50 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
             char szName[MAX_NAMELENGTH];
             strcpy(szName, ptr);
             ptr += strlen(ptr) + 1;
+            if(print_info)
             printf("Rigid Body Name: %s\n", szName);
           }
 
           int ID = 0;
           memcpy(&ID, ptr, 4);
           ptr += 4;
+          if(print_info)
           printf("RigidBody ID : %d\n", ID);
 
           int parentID = 0;
           memcpy(&parentID, ptr, 4);
           ptr += 4;
+          if(print_info)
           printf("Parent ID : %d\n", parentID);
 
           float xoffset = 0;
           memcpy(&xoffset, ptr, 4);
           ptr += 4;
+          if(print_info)
           printf("X Offset : %3.2f\n", xoffset);
 
           float yoffset = 0;
           memcpy(&yoffset, ptr, 4);
           ptr += 4;
+          if(print_info)
           printf("Y Offset : %3.2f\n", yoffset);
 
           float zoffset = 0;
           memcpy(&zoffset, ptr, 4);
           ptr += 4;
+          if(print_info)
           printf("Z Offset : %3.2f\n", zoffset);
         }
       }
 
     }   // next dataset
-
+    if(print_info)
     printf("End Packet\n-------------\n");
 
   } else {
-    printf("Unrecognized Packet Type.\n");
+    // printf("Unrecognized Packet Type.\n");
   }
 
-  outputs.push_back(output_packet_);
 }
 
 
@@ -1050,7 +1114,7 @@ int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsi
   // bind socket
   memset(&my_addr, 0, sizeof(my_addr));
   my_addr.sin_family = AF_INET;
-  my_addr.sin_port = htons(uPort);
+  my_addr.sin_port = htons(uPort);DataSocket
   my_addr.sin_addr.s_addr = IP_Address;
   if (bind(sockfd,
            (struct sockaddr *) &my_addr,
