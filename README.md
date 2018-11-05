@@ -35,3 +35,10 @@ gdb --args `catkin_find optitrack_motive_2_client optitrack_motive_2_client_node
 > bt
 > quit
 ```
+
+## Using the ROS Launch File
+
+```bash
+# Once package has been added to workspace
+roslaunch optitrack_motive_2_client optitrack.launch local:=[local IP address] server:=192.168.1.12
+```
