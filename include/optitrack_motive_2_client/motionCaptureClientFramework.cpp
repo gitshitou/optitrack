@@ -150,6 +150,7 @@ bool motionCaptureClientFramework::initConnection() {
       break;
 
       return true;
+
     printf("Initial connect request failed\n");
     return false;
   }
@@ -903,7 +904,6 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 
   } else if (MessageID == 5) // Data Descriptions ####################################################################3
   {
-    std::cout<<"Test"<<std::endl;    
     bool print_info=0;
     // number of datasets
     int nDatasets = 0;
@@ -949,9 +949,9 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         }
       } else if (type == 1)   // rigid body
       {
+        char szName[MAX_NAMELENGTH];  
         if (major >= 2) {
           // name
-          char szName[MAX_NAMELENGTH];
           strcpy(szName, ptr);
           ptr += strlen(ptr) + 1;
           if(print_info)
@@ -963,6 +963,9 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         ptr += 4;
         if(print_info)
         printf("ID : %d\n", ID);
+
+        // Add rigid body - name pair
+        rigid_body_map[ID] = szName;
 
         int parentID = 0;
         memcpy(&parentID, ptr, 4);
@@ -1026,6 +1029,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           free(markerPositions);
           free(markerRequiredLabels);
         }
+
       } else if (type == 2)   // skeleton
       {
         char szName[MAX_NAMELENGTH];
@@ -1089,9 +1093,14 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       }
 
     }   // next dataset
+
+    // Add names to rigid bodies
+    for (int i = 0; i < outputs.size(); i++) {
+      outputs[i].model_name = rigid_body_map[outputs[i].rigid_body_id];
+    }
+
     if(print_info)
     printf("End Packet\n-------------\n");
-
   } else {
     // printf("Unrecognized Packet Type.\n");
   }
@@ -1099,8 +1108,45 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 }
 
 
+// int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
+//   struct sockaddr_in my_addr{};
+//   static unsigned long ivalue;
+//   static unsigned long bFlag;
+//   int nlengthofsztemp = 64;
+//   int sockfd;
+
+//   // Create a blocking, datagram socket
+//   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+//     return -1;
+//   }
+
+//   // bind socket
+//   memset(&my_addr, 0, sizeof(my_addr));
+//   my_addr.sin_family = AF_INET;
+//   my_addr.sin_port = htons(uPort);
+//   my_addr.sin_addr.s_addr = IP_Address;
+//   if (bind(sockfd,
+//            (struct sockaddr *) &my_addr,
+//            sizeof(struct sockaddr)) == -1) {
+//     close(sockfd);
+//     return -1;
+//   }
+
+//   // set to broadcast mode
+//   ivalue = 1;
+//   if (setsockopt(sockfd,
+//                  SOL_SOCKET,
+//                  SO_BROADCAST,
+//                  (char *) &ivalue,
+//                  sizeof(ivalue)) == -1) {
+//     close(sockfd);
+//     return -1;
+//   }
+
+//   return sockfd;
+// }
+
 int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
-  struct sockaddr_in my_addr{};
   static unsigned long ivalue;
   static unsigned long bFlag;
   int nlengthofsztemp = 64;
@@ -1109,16 +1155,19 @@ int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsi
   // Create a blocking, datagram socket
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
     return -1;
+    printf("Error while opening CommandSocket\n");
   }
 
   // bind socket
+  struct sockaddr_in my_addr{};
   memset(&my_addr, 0, sizeof(my_addr));
   my_addr.sin_family = AF_INET;
-  my_addr.sin_port = htons(uPort);DataSocket
+  my_addr.sin_port = htons(uPort);
   my_addr.sin_addr.s_addr = IP_Address;
   if (bind(sockfd,
            (struct sockaddr *) &my_addr,
            sizeof(struct sockaddr)) == -1) {
+    printf("CommandSocket bind failed!\n");
     close(sockfd);
     return -1;
   }
@@ -1131,6 +1180,7 @@ int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsi
                  (char *) &ivalue,
                  sizeof(ivalue)) == -1) {
     close(sockfd);
+    printf("Error while setting CommandSocket options\n");
     return -1;
   }
 

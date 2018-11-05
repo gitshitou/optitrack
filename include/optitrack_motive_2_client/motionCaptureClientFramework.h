@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <cstring>
+#include <unordered_map>
 
 
 /// @todo: varun move these defines to a enum
@@ -173,6 +174,8 @@ private:
     void Unpack (char *pData, std::vector<Packet> &outputs);
 
     int SendCommand (char *szCommand);
+
+    std::unordered_map<int, std::string> rigid_body_map;
 
     std::string multicast_address;
 

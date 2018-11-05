@@ -1,0 +1,12 @@
+<launch>
+	<arg name="local" />
+	<arg name="server" />
+
+	<node pkg="optitrack_motive_2_client" type="optitrack_motive_2_client_node" name="optitrack" output="screen">
+		<param name="local" value="$(arg local)"/>
+		<param name="server" value="$(arg server)"/>
+	</node>
+
+	<node pkg="tf" type="static_transform_publisher" name="vicon2world_broadcaster" args="0 0 0 0 0 0 world vicon 100" />
+
+</launch>

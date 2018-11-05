@@ -63,12 +63,14 @@ int main(int argc, char *argv[])
 
   // Init ROS
   ros::init(argc, argv, "optitrack_motive_2_client_node");
-  ros::NodeHandle n;
-
+  ros::NodeHandle n("~");
 
   // Get CMDline arguments for server and local IP addresses.
   std::string szMyIPAddress;
   std::string szServerIPAddress;
+
+  n.getParam("local", szMyIPAddress);
+  n.getParam("server", szServerIPAddress);
 
   try {
     po::options_description desc ("Options");
@@ -101,12 +103,26 @@ int main(int argc, char *argv[])
   std::map<int, ros::Publisher> rosPublishers;
   std::map<int, acl_msgs::ViconState> pastStateMessages;
 
-  while (true){
-    // Wait for data description     
-    // mocap_.getCommandPacket();
+  int count_ = 0;
+  int print_freq_ = 2;
+
+  while (ros::ok()){
+    //increase count and publish
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"iter " + std::to_string(count_)<<std::endl;
+    }
 
     // Wait for mocap Data packet
     mocap_.getDataPacket();
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"Data received"<<std::endl;
+    }    
+    // Wait for data description     
+    mocap_.getCommandPacket();
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"CommandPacket received"<<std::endl;
+    }
+
     
     std::vector<agile::Packet> mocap_packets;
     mocap_packets = mocap_.getPackets();
@@ -135,8 +151,7 @@ int main(int argc, char *argv[])
 
       // Initialize publisher for rigid body if not exist.
       if (!hasPreviousMessage){
-        // std::string topic = "/" + mocap_packet.model_name + "/vicon";
-        std::string topic = "/" + std::to_string(mocap_packet.rigid_body_id) + "/vicon";
+        std::string topic = "/" + mocap_packet.model_name + "/vicon";
 
         publisher = n.advertise<acl_msgs::ViconState>(topic, 1);
         rosPublishers[mocap_packet.rigid_body_id] = publisher;
@@ -207,6 +222,7 @@ int main(int argc, char *argv[])
       // Publish ROS state.
       publisher.publish(currentState);
 
+    ++count_;
     }
   }
 }
