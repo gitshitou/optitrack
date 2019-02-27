@@ -14,7 +14,6 @@
 #include <iostream>
 #include <fstream>
 
-namespace po = boost::program_options;
 using namespace Eigen;
 
 // Used to convert mocap frame (NUE) to LCM NED.
@@ -72,29 +71,6 @@ int main(int argc, char *argv[])
   n.getParam("local", szMyIPAddress);
   n.getParam("server", szServerIPAddress);
 
-  try {
-    po::options_description desc ("Options");
-    desc.add_options()
-        ("help,h", "print usage message")
-        ("local",po::value<std::string>(&szMyIPAddress),"local IP Address")
-        ("server",po::value<std::string>(&szServerIPAddress), "server address");
-
-    po::variables_map vm;
-    try {
-      po::store(po::parse_command_line(argc, argv, desc), vm);
-      po::notify (vm);
-    }
-    catch (po::error& e) {
-      std::cerr << e.what() << std::endl;
-      return 0;
-    }
-    if (vm.count("help")) {
-      std::cout << desc << "\n";
-      return 0;
-    }
-  }
-  catch (...) {}
-
   // Init mocap framework
   agile::motionCaptureClientFramework mocap_ = agile::motionCaptureClientFramework(szMyIPAddress, szServerIPAddress);
 
@@ -106,7 +82,7 @@ int main(int argc, char *argv[])
   int count_ = 0;
   int print_freq_ = 2;
 
-  while (ros::ok()){
+  while (ros::ok()) {
     //increase count and publish
     if (count_ % print_freq_ == 0) {
       std::cout<<"iter " + std::to_string(count_)<<std::endl;
@@ -127,7 +103,7 @@ int main(int argc, char *argv[])
     std::vector<agile::Packet> mocap_packets;
     mocap_packets = mocap_.getPackets();
 
-    for (agile::Packet mocap_packet : mocap_packets){
+    for (agile::Packet mocap_packet : mocap_packets) {
 
       // @TODO: Make getPackets return a list.
 
@@ -180,7 +156,7 @@ int main(int argc, char *argv[])
       // Loop through markers and convert positions from NUE to ENU
       // @TODO since the state message does not understand marker locations.
 
-      if (hasPreviousMessage){
+      if (hasPreviousMessage) {
         // Calculate twist. Requires last state message.
         int64_t dt_nsec = packet_ntime - (lastState.header.stamp.sec*1e9 + lastState.header.stamp.nsec);
         currentState.twist.linear.x = (currentState.pose.position.x - lastState.pose.position.x)*1e9/dt_nsec;
