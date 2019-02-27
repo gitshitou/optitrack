@@ -10,94 +10,105 @@ motionCaptureClientFramework::motionCaptureClientFramework(std::string& szMyIPAd
 
   // init connection
   ok_ = initConnection();
+
+  if (!ok_) {
+    printf("\n\nCould not initiate communication with OptiTrack!\n");
+    exit(-1);
+  }
 }
 
 bool motionCaptureClientFramework::initConnection() {
   const int optval = 0x100000;
   socklen_t optval_size = 4;
-  
-  in_addr MulticastAddress{}, MyAddress{}, ServerAddress{};
   int retval = -1;
 
-  // Open socket for listening
-  auto DataSocket = socket(AF_INET, SOCK_DGRAM, 0);
-  MulticastAddress.s_addr = inet_addr(MULTICAST_ADDRESS);
   printf("Client: %s\n", my_address);
   printf("Server: %s\n", server_address);
   printf("Multicast Group: %s\n", MULTICAST_ADDRESS);
 
-  // ================ Create "Command" socket
+  //
+  // Create command socket
+  //
+
   unsigned short port = 8000;
   CommandSocket = CreateCommandSocket(inet_addr(my_address), port);
   if (CommandSocket == -1) {
-  // error
     printf("Command socket creation error\n");
-  } else {
-    // [optional] set to non-blocking
-    //u_long iMode=1;
-    //ioctlsocket(CommandSocket,FIONBIO,&iMode);
-    // set buffer
-    setsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *) &optval, 4);
-    getsockopt(CommandSocket,
-              SOL_SOCKET,
-              SO_RCVBUF,
-              (char *) &optval,
-              &optval_size);
-    if (optval != 0x100000) {
-      // err - actual size...
-      printf("[CommandSocket] ReceiveBuffer size = %d\n", optval);
-    }
+    return false;
+  }
+
+  // [optional] set to non-blocking
+  //u_long iMode=1;
+  //ioctlsocket(CommandSocket,FIONBIO,&iMode);
+
+  // create a 1MB buffer
+  setsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
+  getsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
+  if (optval != 0x100000) {
+    printf("[CommandSocket] ReceiveBuffer size = %d\n", optval);
+    return false;
+  }
+
+  // set a receive timeout
+  struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
+  retval = setsockopt(CommandSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
+  if (retval == -1) {
+    close(CommandSocket);
+    printf("Error while setting CommandSocket timeout\n");
+    return false;
+  }
+
+  //
+  // Create data socket
+  //
+
+  if ((dataSock_ = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+    printf("Error while opening DataSocket\n");
+    return false;
   }
 
   // allow multiple clients on same machine to use address/port
   int value = 1;
-  retval = setsockopt(DataSocket,
-                      SOL_SOCKET,
-                      SO_REUSEADDR,
-                      (char *) &value,
-                      sizeof(value));
+  retval = setsockopt(dataSock_, SOL_SOCKET, SO_REUSEADDR, (char *) &value, sizeof(value));
   if (retval == -1) {
-    close(DataSocket);
+    close(dataSock_);
     printf("Error while setting DataSocket options\n");
-    return -1;
+    return false;
   }
 
-  struct sockaddr_in MySocketAddr{};
-  memset(&MySocketAddr, 0, sizeof(MySocketAddr));
-  MySocketAddr.sin_family = AF_INET;
-  MySocketAddr.sin_port = htons(PORT_DATA);
-  MySocketAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (bind(DataSocket,
-            (struct sockaddr *) &MySocketAddr,
-            sizeof(struct sockaddr)) == -1) {
-    printf("[PacketClient] bind failed\n");
-    return 0;
+  struct sockaddr_in dataSockAddr{};
+  dataSockAddr.sin_family = AF_INET;
+  dataSockAddr.sin_port = htons(PORT_DATA);
+  dataSockAddr.sin_addr.s_addr = htonl(INADDR_ANY); // bind to all local ifaces
+  if (bind(dataSock_, (struct sockaddr *) &dataSockAddr, sizeof(struct sockaddr)) == -1) {
+    close(dataSock_);
+    printf("DataSocket bind failed\n");
+    return false;
   }
-  // join multicast group
+
+  // Join multicast group
   struct ip_mreq Mreq{};
-  Mreq.imr_multiaddr = MulticastAddress;
-  Mreq.imr_interface = MyAddress;
-  retval = setsockopt(DataSocket,
-                      IPPROTO_IP,
-                      IP_ADD_MEMBERSHIP,
-                      (char *) &Mreq,
-                      sizeof(Mreq));
+  Mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_ADDRESS);
+  Mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+  retval = setsockopt(dataSock_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &Mreq, sizeof(Mreq));
   if (retval == -1) {
-    printf("[PacketClient] join failed\n");
-    return -1;
+    printf("DataSocket join failed\n");
+    return false;
   }
+
   // create a 1MB buffer
-  setsockopt(DataSocket, SOL_SOCKET, SO_RCVBUF, (char *) &optval, 4);
-  getsockopt(DataSocket, SOL_SOCKET, SO_RCVBUF, (char *) &optval, &optval_size);
+  setsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
+  getsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
   if (optval != 0x100000) {
-    printf("[PacketClient] ReceiveBuffer size = %d\n", optval);
+    printf("[DataSocket] ReceiveBuffer size = %d\n", optval);
+    return false;
   }
+  
+  //
+  // Send command to the server
+  //
 
-  setDataSocket(DataSocket);
-
-  // ================ Server address for commands
-  // sockaddr_in HostAddr;
-
+  // server address
   memset(&HostAddr, 0, sizeof(HostAddr));
   HostAddr.sin_family = AF_INET;
   HostAddr.sin_port = htons(PORT_COMMAND);
@@ -109,51 +120,56 @@ bool motionCaptureClientFramework::initConnection() {
   PacketOut.nDataBytes = 0;
   int nTries = 3;
   while (nTries--) {
-    ssize_t iRet = sendto(CommandSocket,
-                        (char *) &PacketOut,
+    ssize_t ret = sendto(CommandSocket,
+                        (char *)&PacketOut,
                         4 + PacketOut.nDataBytes,
                         0,
-                        (sockaddr *) &HostAddr,
+                        (sockaddr *)&HostAddr,
                         sizeof(HostAddr));
-    printf("Trying to connect\n");
-    if (iRet != -1)
-      printf("Connected!\n Waiting for server info in response.\n");
+    if (ret == -1) {
+      close(CommandSocket);
+      printf("[CommandSocket] Failed to send NAT_CONNECT to OptiTrack server.\n");
+      return false;
+    }
+    
+    printf("Attempting to connect to OptiTrack server...\n");
 
-      // Wait for server response. 
-      // This will contain the server tick frequency.
-      char ip_as_str[INET_ADDRSTRLEN];
-      ssize_t nDataBytesReceived;
-      sockaddr_in TheirAddress{};
-      agile::sPacket PacketIn{};
-      socklen_t addr_len = sizeof(struct sockaddr);
-      nDataBytesReceived = recvfrom(CommandSocket,
-                                    (char *) &PacketIn,
-                                    sizeof(agile::sPacket),
-                                    0,
-                                    (struct sockaddr *) &TheirAddress,
-                                    &addr_len);
+    // Wait for server response. 
+    // This will contain the server tick frequency.
+    char ip_as_str[INET_ADDRSTRLEN];
+    sockaddr_in remoteAddr{};
+    agile::sPacket PacketIn{};
+    socklen_t addrlen = sizeof(struct sockaddr);
+    ssize_t nBytesRecvd = recvfrom(CommandSocket,
+                                  (char *)&PacketIn,
+                                  sizeof(agile::sPacket),
+                                  0,
+                                  (struct sockaddr *)&remoteAddr,
+                                  &addrlen);
 
-      // if ((nDataBytesReceived == 0) || (nDataBytesReceived == -1))
-      //   continue;
+    if (nBytesRecvd == -1) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        printf("[CommandSocket] Timed out waiting for OptiTrack response.\n");
+        continue;
+      }
+    }
 
-      // debug - print message
-      inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-      printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
-            ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
+    // debug - print message
+    inet_ntop(AF_INET, &(remoteAddr.sin_addr), ip_as_str, INET_ADDRSTRLEN);
+    printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
+          ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
 
-      unsigned char *ptr = (unsigned char *) &PacketIn;
-      agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
+    unsigned char *ptr = (unsigned char *) &PacketIn;
+    agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
 
-      std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
-      server_frequency = server_info->HighResClockFrequency;
-      // Done processing server response.
-      break;
-
-      return true;
-
-    printf("Initial connect request failed\n");
-    return false;
+    std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
+    server_frequency = server_info->HighResClockFrequency;
+    
+    return true;
   }
+
+  printf("Initial connect request failed\n");
+  return false;
 }
 
 // ============================== Data mode ================================ //
@@ -218,7 +234,7 @@ void motionCaptureClientFramework::getDataPacket() {
   // Block until we receive a datagram from the network
   // (from anyone including ourselves)
   //ssize_t nDataBytesReceived =
-  recvfrom(DataSocket,
+  recvfrom(dataSock_,
            szData,
            sizeof(szData),
            0,
@@ -1107,45 +1123,6 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 
 }
 
-
-// int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
-//   struct sockaddr_in my_addr{};
-//   static unsigned long ivalue;
-//   static unsigned long bFlag;
-//   int nlengthofsztemp = 64;
-//   int sockfd;
-
-//   // Create a blocking, datagram socket
-//   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-//     return -1;
-//   }
-
-//   // bind socket
-//   memset(&my_addr, 0, sizeof(my_addr));
-//   my_addr.sin_family = AF_INET;
-//   my_addr.sin_port = htons(uPort);
-//   my_addr.sin_addr.s_addr = IP_Address;
-//   if (bind(sockfd,
-//            (struct sockaddr *) &my_addr,
-//            sizeof(struct sockaddr)) == -1) {
-//     close(sockfd);
-//     return -1;
-//   }
-
-//   // set to broadcast mode
-//   ivalue = 1;
-//   if (setsockopt(sockfd,
-//                  SOL_SOCKET,
-//                  SO_BROADCAST,
-//                  (char *) &ivalue,
-//                  sizeof(ivalue)) == -1) {
-//     close(sockfd);
-//     return -1;
-//   }
-
-//   return sockfd;
-// }
-
 int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
   static unsigned long ivalue;
   static unsigned long bFlag;
@@ -1159,26 +1136,19 @@ int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsi
   }
 
   // bind socket
-  struct sockaddr_in my_addr{};
-  memset(&my_addr, 0, sizeof(my_addr));
-  my_addr.sin_family = AF_INET;
-  my_addr.sin_port = htons(uPort);
-  my_addr.sin_addr.s_addr = IP_Address;
-  if (bind(sockfd,
-           (struct sockaddr *) &my_addr,
-           sizeof(struct sockaddr)) == -1) {
-    printf("CommandSocket bind failed!\n");
+  struct sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(uPort);
+  addr.sin_addr.s_addr = IP_Address;
+  if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) == -1) {
     close(sockfd);
+    printf("CommandSocket bind failed!\n");
     return -1;
   }
 
   // set to broadcast mode
   ivalue = 1;
-  if (setsockopt(sockfd,
-                 SOL_SOCKET,
-                 SO_BROADCAST,
-                 (char *) &ivalue,
-                 sizeof(ivalue)) == -1) {
+  if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (char *)&ivalue, sizeof(ivalue)) == -1) {
     close(sockfd);
     printf("Error while setting CommandSocket options\n");
     return -1;
@@ -1198,10 +1168,10 @@ void motionCaptureClientFramework::CommandListenThread() {
   while (true) {
     // blocking
     nDataBytesReceived = recvfrom(CommandSocket,
-                                  (char *) &PacketIn,
+                                  (char *)&PacketIn,
                                   sizeof(sPacket),
                                   0,
-                                  (struct sockaddr *) &TheirAddress,
+                                  (struct sockaddr *)&TheirAddress,
                                   &addr_len);
 
     if ((nDataBytesReceived == 0) || (nDataBytesReceived == -1))

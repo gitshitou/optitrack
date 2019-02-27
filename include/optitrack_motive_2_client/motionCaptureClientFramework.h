@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <cstring>
 #include <unordered_map>
+#include <errno.h>
 
 
 /// @todo: varun move these defines to a enum
@@ -129,12 +130,10 @@ public:
 
     int CreateCommandSocket (in_addr_t IP_Address, unsigned short uPort);
 
-    void setDataSocket (int sock) {DataSocket = sock;}
-
 private:
     // Sockets
     int CommandSocket;
-    int DataSocket;
+    int dataSock_;
     in_addr ServerAddress;
     sockaddr_in HostAddr;
     const char *my_address;
