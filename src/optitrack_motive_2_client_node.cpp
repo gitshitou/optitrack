@@ -80,7 +80,9 @@ int main(int argc, char *argv[])
   std::map<int, acl_msgs::ViconState> pastStateMessages;
 
   int count_ = 0;
-  int print_freq_ = 2;
+  int print_freq_ = 1500;
+
+  bool time_set = false;
 
   while (ros::ok()) {
     //increase count and publish
@@ -114,8 +116,9 @@ int main(int argc, char *argv[])
       // estimate the windows to linux constant offset by taking the minimum seen offset.
       // @TODO: Make offset a rolling average instead of a latching offset.
       int64_t offset = mocap_packet.transmit_timestamp - mocap_packet.receive_timestamp;
-      if (offset < offset_between_windows_and_linux ){
+      if (offset < offset_between_windows_and_linux && !time_set){
         offset_between_windows_and_linux = offset;
+        time_set = true;
       }
       uint64_t packet_ntime = mocap_packet.mid_exposure_timestamp - offset_between_windows_and_linux;
 
@@ -127,7 +130,7 @@ int main(int argc, char *argv[])
 
       // Initialize publisher for rigid body if not exist.
       if (!hasPreviousMessage){
-        std::string topic = "/" + mocap_packet.model_name + "/vicon";
+        std::string topic = "/" + mocap_packet.model_name + "/optitrack";
 
         publisher = n.advertise<acl_msgs::ViconState>(topic, 1);
         rosPublishers[mocap_packet.rigid_body_id] = publisher;
@@ -139,6 +142,7 @@ int main(int argc, char *argv[])
 
       // Add timestamp
       currentState.header.stamp = ros::Time(packet_ntime/1e9, packet_ntime%(int64_t)1e9);
+      // currentState.header.stamp = ros::Time(mocap_packet.transmit_timestamp/1e9, mocap_packet.transmit_timestamp%(int64_t)1e9);
 
       // Convert rigid body position from NUE to ROS ENU
       Vector3d positionENUVector = positionConvertNUE2ENU(mocap_packet.pos);
