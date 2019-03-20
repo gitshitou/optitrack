@@ -107,7 +107,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
  INCLUDE_DIRS include
- LIBRARIES optitrack
+ LIBRARIES optitrack_client
  CATKIN_DEPENDS roscpp geometry_msgs
 #  DEPENDS system_lib
 )
@@ -122,12 +122,11 @@ include_directories(
   include
   ${catkin_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
-  ${Boost_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
-add_library(${PROJECT_NAME} SHARED
-  include/${PROJECT_NAME}/motionCaptureClientFramework.cpp
+add_library(optitrack_client SHARED
+  src/optitrack_client.cpp
 )
 
 ## Add cmake target dependencies of the library
@@ -138,25 +137,20 @@ add_library(${PROJECT_NAME} SHARED
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(${PROJECT_NAME}_node src/optitrack_node.cpp)
+add_executable(optitrack_node src/optitrack_node.cpp src/optitrack.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
-# set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
+set_target_properties(optitrack_node PROPERTIES OUTPUT_NAME optitrack PREFIX "")
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-# add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(optitrack_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(${PROJECT_NAME}_node
-  ${PROJECT_NAME}
-  ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
-  ${catkin_LIBRARIES}
-)
+target_link_libraries(optitrack_node optitrack_client ${catkin_LIBRARIES})
 
 #############
 ## Install ##

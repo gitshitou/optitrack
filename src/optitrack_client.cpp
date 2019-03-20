@@ -1,23 +1,44 @@
-#include "motionCaptureClientFramework.h"
+/**
+ * MIT License
+ * 
+ * Copyright (c) 2018 AgileDrones
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+/**
+ * Originally from: https://github.com/mit-fast/OptiTrack-Motive-2-Client
+ */
+
+#include "OptiTrackClient.h"
 
 namespace agile {
 
-motionCaptureClientFramework::motionCaptureClientFramework(std::string& szMyIPAddress, std::string& szServerIPAddress)
+OptiTrackClient::OptiTrackClient(const std::string& szMyIPAddress,
+                                 const std::string& szServerIPAddress)
 {
   // Convert address std::string to c_str.
   my_address = szMyIPAddress.c_str();
   server_address = szServerIPAddress.c_str();
-
-  // init connection
-  ok_ = initConnection();
-
-  if (!ok_) {
-    printf("\n\nCould not initiate communication with OptiTrack!\n");
-    exit(-1);
-  }
 }
 
-bool motionCaptureClientFramework::initConnection() {
+bool OptiTrackClient::initConnection() {
   const int optval = 0x100000;
   socklen_t optval_size = 4;
   int retval = -1;
@@ -175,7 +196,7 @@ bool motionCaptureClientFramework::initConnection() {
 // ============================== Data mode ================================ //
 // Funtion that assigns a time code values to 5 variables passed as arguments
 // Requires an integer from the packet as the timecode and timecodeSubframe
-bool motionCaptureClientFramework::DecodeTimecode(unsigned int inTimecode,
+bool OptiTrackClient::DecodeTimecode(unsigned int inTimecode,
                     unsigned int inTimecodeSubframe,
                     int *hour,
                     int *minute,
@@ -194,7 +215,7 @@ bool motionCaptureClientFramework::DecodeTimecode(unsigned int inTimecode,
 }
 
 // Takes timecode and assigns it to a string
-bool motionCaptureClientFramework::TimecodeStringify(unsigned int inTimecode,
+bool OptiTrackClient::TimecodeStringify(unsigned int inTimecode,
                        unsigned int inTimecodeSubframe,
                        char *Buffer,
                        size_t BufferSize) {
@@ -217,7 +238,7 @@ bool motionCaptureClientFramework::TimecodeStringify(unsigned int inTimecode,
   return bValid;
 }
 
-void motionCaptureClientFramework::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID) {
+void OptiTrackClient::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID) {
   if (pOutEntityID)
     *pOutEntityID = sourceID >> 16;
 
@@ -226,7 +247,7 @@ void motionCaptureClientFramework::DecodeMarkerID(int sourceID, int *pOutEntityI
 }
 
 // Data listener thread. Listens for incoming bytes from NatNet
-void motionCaptureClientFramework::getDataPacket() {
+void OptiTrackClient::getDataPacket() {
   char szData[20000];
   socklen_t addr_len = sizeof(struct sockaddr);
   sockaddr_in TheirAddress{};
@@ -252,7 +273,7 @@ void motionCaptureClientFramework::getDataPacket() {
 }
 
 
-void motionCaptureClientFramework::getCommandPacket() {
+void OptiTrackClient::getCommandPacket() {
     agile::sPacket PacketOut{};
     PacketOut.iMessage = NAT_REQUEST_MODELDEF;  //NAT_FRAMEOFDATA;     //NAT_REQUEST_MODELDEF;
     PacketOut.nDataBytes = 0;
@@ -290,7 +311,7 @@ void motionCaptureClientFramework::getCommandPacket() {
 
 // ============================= Command mode ============================== //
 // Send a command to Motive.
-int motionCaptureClientFramework::SendCommand(char *szCommand) {
+int OptiTrackClient::SendCommand(char *szCommand) {
   // reset global result
   gCommandResponse = -1;
 
@@ -331,7 +352,7 @@ int motionCaptureClientFramework::SendCommand(char *szCommand) {
   return gCommandResponse;
 }
 
-void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outputs) {
+void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
   // Checks for NatNet Version number. Used later in function.
   // Packets may be different depending on NatNet version.
   int major = NatNetVersion[0];
@@ -1123,7 +1144,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 
 }
 
-int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
+int OptiTrackClient::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
   static unsigned long ivalue;
   static unsigned long bFlag;
   int nlengthofsztemp = 64;
@@ -1158,7 +1179,7 @@ int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsi
 }
 
 // Command response listener thread
-void motionCaptureClientFramework::CommandListenThread() {
+void OptiTrackClient::CommandListenThread() {
   char ip_as_str[INET_ADDRSTRLEN];
   ssize_t nDataBytesReceived;
   sockaddr_in TheirAddress{};
@@ -1247,7 +1268,7 @@ void motionCaptureClientFramework::CommandListenThread() {
 }
 
 // Convert IP address string to address
-bool motionCaptureClientFramework::IPAddress_StringToAddr(char *szNameOrAddress,
+bool OptiTrackClient::IPAddress_StringToAddr(char *szNameOrAddress,
                             struct in_addr *Address) const{
   int retVal;
   struct sockaddr_in saGNI;
