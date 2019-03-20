@@ -12,6 +12,8 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <cstring>
+#include <unordered_map>
+#include <errno.h>
 
 
 /// @todo: varun move these defines to a enum
@@ -110,7 +112,9 @@ public:
     bool initConnection();
 
     // Blocking call that waits for a mocap packet to arrive. Then returns.
-    void spin();
+    void getDataPacket();
+
+    void getCommandPacket();
 
     bool isOK() {return ok_;}
 
@@ -126,12 +130,10 @@ public:
 
     int CreateCommandSocket (in_addr_t IP_Address, unsigned short uPort);
 
-    void setDataSocket (int sock) {DataSocket = sock;}
-
 private:
     // Sockets
     int CommandSocket;
-    int DataSocket;
+    int dataSock_;
     in_addr ServerAddress;
     sockaddr_in HostAddr;
     const char *my_address;
@@ -171,6 +173,8 @@ private:
     void Unpack (char *pData, std::vector<Packet> &outputs);
 
     int SendCommand (char *szCommand);
+
+    std::unordered_map<int, std::string> rigid_body_map;
 
     std::string multicast_address;
 

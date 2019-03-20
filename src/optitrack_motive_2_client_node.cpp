@@ -14,7 +14,6 @@
 #include <iostream>
 #include <fstream>
 
-namespace po = boost::program_options;
 using namespace Eigen;
 
 // Used to convert mocap frame (NUE) to LCM NED.
@@ -63,35 +62,14 @@ int main(int argc, char *argv[])
 
   // Init ROS
   ros::init(argc, argv, "optitrack_motive_2_client_node");
-  ros::NodeHandle n;
-
+  ros::NodeHandle n("~");
 
   // Get CMDline arguments for server and local IP addresses.
   std::string szMyIPAddress;
   std::string szServerIPAddress;
 
-  try {
-    po::options_description desc ("Options");
-    desc.add_options()
-        ("help,h", "print usage message")
-        ("local",po::value<std::string>(&szMyIPAddress),"local IP Address")
-        ("server",po::value<std::string>(&szServerIPAddress), "server address");
-
-    po::variables_map vm;
-    try {
-      po::store(po::parse_command_line(argc, argv, desc), vm);
-      po::notify (vm);
-    }
-    catch (po::error& e) {
-      std::cerr << e.what() << std::endl;
-      return 0;
-    }
-    if (vm.count("help")) {
-      std::cout << desc << "\n";
-      return 0;
-    }
-  }
-  catch (...) {}
+  n.getParam("local", szMyIPAddress);
+  n.getParam("server", szServerIPAddress);
 
   // Init mocap framework
   agile::motionCaptureClientFramework mocap_ = agile::motionCaptureClientFramework(szMyIPAddress, szServerIPAddress);
@@ -101,13 +79,33 @@ int main(int argc, char *argv[])
   std::map<int, ros::Publisher> rosPublishers;
   std::map<int, acl_msgs::ViconState> pastStateMessages;
 
-  while (true){
-    // Wait for mocap packet
-    mocap_.spin();
+  int count_ = 0;
+  int print_freq_ = 1500;
 
-    std::vector<agile::Packet> mocap_packets = mocap_.getPackets();
+  bool time_set = false;
 
-    for (agile::Packet mocap_packet : mocap_packets){
+  while (ros::ok()) {
+    //increase count and publish
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"iter " + std::to_string(count_)<<std::endl;
+    }
+
+    // Wait for mocap Data packet
+    mocap_.getDataPacket();
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"Data received"<<std::endl;
+    }    
+    // Wait for data description     
+    mocap_.getCommandPacket();
+    if (count_ % print_freq_ == 0) {
+      std::cout<<"CommandPacket received"<<std::endl;
+    }
+
+    
+    std::vector<agile::Packet> mocap_packets;
+    mocap_packets = mocap_.getPackets();
+
+    for (agile::Packet mocap_packet : mocap_packets) {
 
       // @TODO: Make getPackets return a list.
 
@@ -118,8 +116,9 @@ int main(int argc, char *argv[])
       // estimate the windows to linux constant offset by taking the minimum seen offset.
       // @TODO: Make offset a rolling average instead of a latching offset.
       int64_t offset = mocap_packet.transmit_timestamp - mocap_packet.receive_timestamp;
-      if (offset < offset_between_windows_and_linux ){
+      if (offset < offset_between_windows_and_linux && !time_set){
         offset_between_windows_and_linux = offset;
+        time_set = true;
       }
       uint64_t packet_ntime = mocap_packet.mid_exposure_timestamp - offset_between_windows_and_linux;
 
@@ -131,7 +130,7 @@ int main(int argc, char *argv[])
 
       // Initialize publisher for rigid body if not exist.
       if (!hasPreviousMessage){
-        std::string topic = "/" + mocap_packet.model_name + "/vicon";
+        std::string topic = "/" + mocap_packet.model_name + "/optitrack";
 
         publisher = n.advertise<acl_msgs::ViconState>(topic, 1);
         rosPublishers[mocap_packet.rigid_body_id] = publisher;
@@ -143,6 +142,7 @@ int main(int argc, char *argv[])
 
       // Add timestamp
       currentState.header.stamp = ros::Time(packet_ntime/1e9, packet_ntime%(int64_t)1e9);
+      // currentState.header.stamp = ros::Time(mocap_packet.transmit_timestamp/1e9, mocap_packet.transmit_timestamp%(int64_t)1e9);
 
       // Convert rigid body position from NUE to ROS ENU
       Vector3d positionENUVector = positionConvertNUE2ENU(mocap_packet.pos);
@@ -160,7 +160,7 @@ int main(int argc, char *argv[])
       // Loop through markers and convert positions from NUE to ENU
       // @TODO since the state message does not understand marker locations.
 
-      if (hasPreviousMessage){
+      if (hasPreviousMessage) {
         // Calculate twist. Requires last state message.
         int64_t dt_nsec = packet_ntime - (lastState.header.stamp.sec*1e9 + lastState.header.stamp.nsec);
         currentState.twist.linear.x = (currentState.pose.position.x - lastState.pose.position.x)*1e9/dt_nsec;
@@ -202,6 +202,7 @@ int main(int argc, char *argv[])
       // Publish ROS state.
       publisher.publish(currentState);
 
+    ++count_;
     }
   }
 }
