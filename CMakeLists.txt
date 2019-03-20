@@ -1,18 +1,20 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(optitrack_motive_2_client)
+project(optitrack)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
-add_compile_options(-std=c++11)
+set(CMAKE_CXX_STANDARD 14)
+if (NOT CMAKE_BUILD_TYPE)
+    # Options: Debug, Release, MinSizeRel, RelWithDebInfo
+    message(STATUS "No build type selected, default to Release")
+    set(CMAKE_BUILD_TYPE "Release")
+endif()
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  nav_msgs
   roscpp
-  rostime
-  std_msgs
-  acl_msgs # used for compatibility with ACL group's Vicon message type.
+  geometry_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -71,7 +73,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 ## Generate added messages and services with any dependencies listed here
 # generate_messages(
 #   DEPENDENCIES
-#   nav_msgs#   std_msgs
+#   std_msgs
 # )
 
 ################################################
@@ -105,8 +107,8 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
  INCLUDE_DIRS include
- LIBRARIES optitrack_motive_2_client
- CATKIN_DEPENDS nav_msgs acl_msgs roscpp rostime std_msgs
+ LIBRARIES optitrack
+ CATKIN_DEPENDS roscpp geometry_msgs
 #  DEPENDS system_lib
 )
 
@@ -136,7 +138,7 @@ add_library(${PROJECT_NAME} SHARED
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(${PROJECT_NAME}_node src/optitrack_motive_2_client_node.cpp)
+add_executable(${PROJECT_NAME}_node src/optitrack_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -196,7 +198,7 @@ install(TARGETS ${PROJECT_NAME}_node
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_optitrack_motive_2_client.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_optitrack.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

@@ -1,21 +1,5 @@
-# ROS OptiTrack Client for Motive 2
-
-## Installation
-
-```bash
-# Prerequisites
-sudo apt install libeigen3-dev
-
-# Install in ROS workspace. Assumes that 'wstool init' has been run in workspace
-cd ~/catkin_ws/src
-
-curl https://raw.githubusercontent.com/AgileDrones/OptiTrack-Motive-2-Client/master/.rosinstall >> .rosinstall
-wstool update
-
-cd ../
-catkin_make
-
-```
+ROS OptiTrack Client for Motive 2
+=================================
 
 ## Running Client Node
 
