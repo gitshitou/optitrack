@@ -16,7 +16,7 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
   nh.getParam("local", localIP_);
   nh.getParam("server", serverIP_);
 
-  client_ = std::make_unique<agile::motionCaptureClientFramework>(localIP_, serverIP_);
+  client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_);
 
   if (!client_->initConnection()) {
     ROS_ERROR("Could not initiate communication with OptiTrack server!");
@@ -48,81 +48,65 @@ void OptiTrack::spin()
     }
 
     // Wait for mocap Data packet
-    mocap_.getDataPacket();
+    client_->getDataPacket();
     if (count_ % print_freq_ == 0) {
       std::cout<<"Data received"<<std::endl;
     }    
     // Wait for data description     
-    mocap_.getCommandPacket();
+    client_->getCommandPacket();
     if (count_ % print_freq_ == 0) {
       std::cout<<"CommandPacket received"<<std::endl;
     }
 
     
-    std::vector<agile::Packet> mocap_packets;
-    mocap_packets = mocap_.getPackets();
+    //
+    // Process OptiTrack "packets" (i.e., rigid bodies)
+    //
 
-    for (agile::Packet mocap_packet : mocap_packets) {
-
-      // @TODO: Make getPackets return a list.
+    std::vector<agile::Packet> mocapPackets = client_->getPackets();
+    for (const auto& pkt : mocapPackets) {
 
       // Skip this rigid body if tracking is invalid
-      if (!mocap_packet.tracking_valid)
-        continue;
+      if (!pkt.tracking_valid) continue;
 
       // estimate the windows to linux constant offset by taking the minimum seen offset.
       // @TODO: Make offset a rolling average instead of a latching offset.
-      int64_t offset = mocap_packet.transmit_timestamp - mocap_packet.receive_timestamp;
+      int64_t offset = pkt.transmit_timestamp - pkt.receive_timestamp;
       if (offset < offset_between_windows_and_linux && !time_set){
         offset_between_windows_and_linux = offset;
         time_set = true;
       }
-      uint64_t packet_ntime = mocap_packet.mid_exposure_timestamp - offset_between_windows_and_linux;
+      uint64_t packet_ntime = pkt.mid_exposure_timestamp - offset_between_windows_and_linux;
 
       // Get past state and publisher (if they exist)
-      bool hasPreviousMessage = (rosPublishers.find(mocap_packet.rigid_body_id) != rosPublishers.end());
       ros::Publisher publisher;
-      geometry_msgs::PoseStamped lastState;
       geometry_msgs::PoseStamped currentState;
 
       // Initialize publisher for rigid body if not exist.
-      if (!hasPreviousMessage){
-        std::string topic = "/" + mocap_packet.model_name + "/optitrack";
-
-        publisher = n.advertise<geometry_msgs::PoseStamped>(topic, 1);
-        rosPublishers[mocap_packet.rigid_body_id] = publisher;
-      } else {
-        // Get saved publisher and last state
-        publisher = rosPublishers[mocap_packet.rigid_body_id];
-        lastState = pastStateMessages[mocap_packet.rigid_body_id];
+      if (rosPublishers.find(pkt.rigid_body_id) == rosPublishers.end()) {
+        std::string topic = "/" + pkt.model_name + "/optitrack";
+        rosPublishers[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);;
       }
+
+      // Get saved publisher and last state
+      publisher = rosPublishers[pkt.rigid_body_id];
 
       // Add timestamp
       currentState.header.stamp = ros::Time(packet_ntime/1e9, packet_ntime%(int64_t)1e9);
-      // currentState.header.stamp = ros::Time(mocap_packet.transmit_timestamp/1e9, mocap_packet.transmit_timestamp%(int64_t)1e9);
 
-      // Convert rigid body position from NUE to ROS ENU
-      Vector3d positionENUVector = positionConvertNUE2ENU(mocap_packet.pos);
-      currentState.pose.position.x = positionENUVector(0);
-      currentState.pose.position.y = positionENUVector(1);
-      currentState.pose.position.z = positionENUVector(2);
-      // Convert rigid body rotation from NUE to ROS ENU
-      Quaterniond quaternionENUVector = quaternionConvertNUE2ENU(mocap_packet.orientation);
-      currentState.pose.orientation.x = quaternionENUVector.x();
-      currentState.pose.orientation.y = quaternionENUVector.y();
-      currentState.pose.orientation.z = quaternionENUVector.z();
-      currentState.pose.orientation.w = quaternionENUVector.w();
+      // convert from raw optitrack frame to ENU with body flu
+      currentState.pose = toENUPose(pkt.pos, pkt.orientation);
 
       // Loop through markers and convert positions from NUE to ENU
       // @TODO since the state message does not understand marker locations.
 
       // Save state for future acceleration and twist computations
-      pastStateMessages[mocap_packet.rigid_body_id] = currentState;
+      pastStateMessages[pkt.rigid_body_id] = currentState;
 
       // Publish ROS state.
       publisher.publish(currentState);
 
-    ++count_;
+      ++count_;
     }
   }
 }
@@ -131,35 +115,27 @@ void OptiTrack::spin()
 // Private Methods
 // ----------------------------------------------------------------------------
 
-// // Used to convert mocap frame (NUE) to ROS ENU.
-// static Eigen::Matrix3d R_NUE2ENU = [] {
-//     Eigen::Matrix3d tmp;
-//     tmp <<  0, 0, 1,
-//             1, 0, 0,
-//             0, 1, 0;
-//     return tmp;
-// }();
+geometry_msgs::Pose OptiTrack::toENUPose(const double* p, const double* q)
+{
+  // rigid body (dots) raw (Y-Up, "fur") w.r.t OptiTrack-Raw (Y-Up, "NUE")
+  tf2::Transform T_ORBR;
+  T_ORBR.setOrigin(tf2::Vector3(p[0], p[1], p[2]));
+  T_ORBR.setRotation(tf2::Quaternion(q[0], q[1], q[2], q[3]));
 
-// Eigen::Vector3d positionConvertNUE2ENU(double* positionNUE){
-//   Eigen::Vector3d positionNUEVector, positionENUVector;
-//   positionNUEVector << positionNUE[0], positionNUE[1], positionNUE[2];
+  // transformation from fur to flu / NUE to NED (same for local / global)
+  tf2::Transform T_BRB; // body (flu) w.r.t body-raw (fur)
+  T_BRB.setIdentity();
+  tf2::Quaternion quat; quat.setRPY(-M_PI/2, 0, -M_PI/2);
+  T_BRB.setRotation(quat);
+  tf2::Transform T_OOR = T_BRB.inverse(); // optitrack-raw (NUE) w.r.t optitrack (ENU)
 
-//   positionENUVector = R_NUE2ENU * positionNUEVector;
-//   return positionENUVector;
-// }
+  // rigid body (dots) (flu) w.r.t OptiTrack frame (ROS ENU)
+  tf2::Transform T_OB = T_OOR * T_ORBR * T_BRB;
 
-// Eigen::Quaterniond quaternionConvertNUE2ENU(double* quaternionNUE){
-//     Eigen::Quaterniond quaternionInNUE;
-//     quaternionInNUE.x() = quaternionNUE[0];
-//     quaternionInNUE.y() = quaternionNUE[1];
-//     quaternionInNUE.z() = quaternionNUE[2];
-//     quaternionInNUE.w() = quaternionNUE[3];
-
-//     Quaterniond quaternionInENU = Eigen::Quaterniond(R_NUE2ENU * quaternionInNUE.normalized().toRotationMatrix()
-//                               * R_NUE2ENU.transpose());
-//     return quaternionInENU;
-// }
-
+  geometry_msgs::Pose pose;
+  tf2::toMsg(T_OB, pose);
+  return pose;
+}
 
 } // ns optitrack
 } // ns acl

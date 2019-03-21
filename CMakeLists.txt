@@ -14,6 +14,8 @@ endif()
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   roscpp
+  tf2
+  tf2_geometry_msgs
   geometry_msgs
 )
 
@@ -108,7 +110,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES optitrack_client
- CATKIN_DEPENDS roscpp geometry_msgs
+ CATKIN_DEPENDS roscpp tf2 tf2_geometry_msgs geometry_msgs
 #  DEPENDS system_lib
 )
 

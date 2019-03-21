@@ -31,17 +31,17 @@
 
 #include <vector>
 #include <iostream>
-#include <linux/limits.h>
-#include <boost/optional.hpp>
 #include <chrono>
 #include <thread>
+#include <cstring>
+#include <unordered_map>
 #include <unistd.h>
+#include <linux/limits.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <cstring>
-#include <unordered_map>
 #include <errno.h>
+#include <boost/optional.hpp>
 
 
 /// @todo: varun move these defines to a enum
@@ -97,43 +97,42 @@ namespace agile {
 
     struct Marker
     {
-        int id;
-        double x;
-        double y;
-        double z;
-        double size;
-        double residual;
+      int id;
+      double x;
+      double y;
+      double z;
+      double size;
+      double residual;
     };
 
     struct Packet
     {
-        int message_id;
+      int message_id;
 
-        std::string model_name;
-        int rigid_body_id;
-        double pos[3];
-        double orientation[4];
-        std::vector<Marker> markers_;
+      std::string model_name;
+      int rigid_body_id;
+      double pos[3];
+      double orientation[4];
+      std::vector<Marker> markers_;
 
-        bool tracking_valid;
-        float mean_marker_error;
-        int labeled_marker_count;
+      bool tracking_valid;
+      float mean_marker_error;
+      int labeled_marker_count;
 
-        int frame_number;
+      int frame_number;
 
-        // NOTE: All are nanosecond timestamps
-        uint64_t timestamp;
-        uint64_t mid_exposure_timestamp;
-        uint64_t camera_data_received_timestamp;
-        uint64_t transmit_timestamp;
-        // Calculated on receive.
-        uint64_t receive_timestamp;
+      // NOTE: All are nanosecond timestamps
+      uint64_t timestamp;
+      uint64_t mid_exposure_timestamp;
+      uint64_t camera_data_received_timestamp;
+      uint64_t transmit_timestamp;
+      // Calculated on receive.
+      uint64_t receive_timestamp;
     };
 
 class OptiTrackClient
 {
-
-public:
+  public:
     OptiTrackClient(const std::string& szMyIPAddress, const std::string& szServerIPAddress);
 
     // Starts connection to mocap and initializes settings.
@@ -143,8 +142,6 @@ public:
     void getDataPacket();
 
     void getCommandPacket();
-
-    bool isOK() {return ok_;}
 
     uint64_t getServerFrequency() {return server_frequency;};
 
@@ -158,7 +155,7 @@ public:
 
     int CreateCommandSocket (in_addr_t IP_Address, unsigned short uPort);
 
-private:
+  private:
     // Sockets
     int CommandSocket;
     int dataSock_;
