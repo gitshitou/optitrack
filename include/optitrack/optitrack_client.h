@@ -111,8 +111,8 @@ namespace agile {
 
       std::string model_name;
       int rigid_body_id;
-      double pos[3];
-      double orientation[4];
+      double pos[3]; // x, y, z
+      double orientation[4]; // x, y, z, w
       std::vector<Marker> markers_;
 
       bool tracking_valid;
