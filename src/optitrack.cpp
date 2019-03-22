@@ -125,7 +125,7 @@ geometry_msgs::Pose OptiTrack::toENUPose(const double* p, const double* q)
   // transformation from fur to flu / NUE to NED (same for local / global)
   tf2::Transform T_BRB; // body (flu) w.r.t body-raw (fur)
   T_BRB.setIdentity();
-  tf2::Quaternion quat; quat.setRPY(-M_PI/2, 0, -M_PI/2);
+  tf2::Quaternion quat; quat.setRPY(0, -M_PI/2, -M_PI/2);
   T_BRB.setRotation(quat);
   tf2::Transform T_OOR = T_BRB.inverse(); // optitrack-raw (NUE) w.r.t optitrack (ENU)
 
