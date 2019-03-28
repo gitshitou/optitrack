@@ -84,7 +84,13 @@ void OptiTrack::spin()
 
       // Initialize publisher for rigid body if not exist.
       if (rosPublishers.find(pkt.rigid_body_id) == rosPublishers.end()) {
-        std::string topic = "/" + pkt.model_name + "/optitrack";
+        // clean model name for ROS topic---only keep alphanumeric chars
+        std::string name = pkt.model_name;
+        name.erase(std::remove_if(name.begin(), name.end(),
+              [](auto const& c) -> bool { return !std::isalnum(c); }
+            ), name.end());
+
+        std::string topic = "/" + name + "/optitrack";
         rosPublishers[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);;
       }
 
