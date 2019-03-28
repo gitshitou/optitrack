@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(optitrack)
 
-## Compile as C++11, supported in ROS Kinetic and newer
+## Compile as C++14, supported in ROS Kinetic and newer
 set(CMAKE_CXX_STANDARD 14)
 if (NOT CMAKE_BUILD_TYPE)
     # Options: Debug, Release, MinSizeRel, RelWithDebInfo

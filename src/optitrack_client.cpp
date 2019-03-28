@@ -53,8 +53,8 @@ bool OptiTrackClient::initConnection() {
   // Create command socket
   //
 
-  unsigned short port = 8000;
-  CommandSocket = CreateCommandSocket(inet_addr(my_address), port);
+  constexpr unsigned short ANY_PORT = 0;
+  CommandSocket = CreateCommandSocket(inet_addr(my_address), ANY_PORT);
   if (CommandSocket == -1) {
     printf("Command socket creation error\n");
     return false;
