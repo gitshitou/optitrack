@@ -30,12 +30,12 @@
 
 namespace agile {
 
-OptiTrackClient::OptiTrackClient(const std::string& szMyIPAddress,
-                                 const std::string& szServerIPAddress)
+OptiTrackClient::OptiTrackClient(const std::string& localIP,
+                                 const std::string& serverIP,
+                                 const std::string& multicastGroupIP)
+: localIP_(localIP), serverIP_(serverIP), multicastIP_(multicastGroupIP)
 {
-  // Convert address std::string to c_str.
-  my_address = szMyIPAddress.c_str();
-  server_address = szServerIPAddress.c_str();
+
 }
 
 // ----------------------------------------------------------------------------
@@ -45,16 +45,12 @@ bool OptiTrackClient::initConnection() {
   socklen_t optval_size = 4;
   int retval = -1;
 
-  printf("Client: %s\n", my_address);
-  printf("Server: %s\n", server_address);
-  printf("Multicast Group: %s\n", MULTICAST_ADDRESS);
-
   //
   // Create command socket
   //
 
   constexpr unsigned short ANY_PORT = 0;
-  CommandSocket = CreateCommandSocket(inet_addr(my_address), ANY_PORT);
+  CommandSocket = CreateCommandSocket(inet_addr(localIP_.c_str()), ANY_PORT);
   if (CommandSocket == -1) {
     printf("Command socket creation error\n");
     return false;
@@ -102,7 +98,7 @@ bool OptiTrackClient::initConnection() {
   struct sockaddr_in dataSockAddr{};
   dataSockAddr.sin_family = AF_INET;
   dataSockAddr.sin_port = htons(PORT_DATA);
-  dataSockAddr.sin_addr.s_addr = htonl(INADDR_ANY); // bind to all local ifaces
+  dataSockAddr.sin_addr.s_addr = htonl(INADDR_ANY); // bind to all local ifaces // use localIP_?
   if (bind(dataSock_, (struct sockaddr *) &dataSockAddr, sizeof(struct sockaddr)) == -1) {
     close(dataSock_);
     printf("DataSocket bind failed\n");
@@ -112,7 +108,7 @@ bool OptiTrackClient::initConnection() {
   // Join multicast group
   struct ip_mreq Mreq{};
   Mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_ADDRESS);
-  Mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+  Mreq.imr_interface.s_addr = htonl(INADDR_ANY); // use localIP_?
   retval = setsockopt(dataSock_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &Mreq, sizeof(Mreq));
   if (retval == -1) {
     printf("DataSocket join failed\n");
@@ -135,7 +131,7 @@ bool OptiTrackClient::initConnection() {
   memset(&HostAddr, 0, sizeof(HostAddr));
   HostAddr.sin_family = AF_INET;
   HostAddr.sin_port = htons(PORT_COMMAND);
-  HostAddr.sin_addr.s_addr = inet_addr(server_address);
+  HostAddr.sin_addr.s_addr = inet_addr(serverIP_.c_str());
 
   // send initial connect request
   agile::sPacket PacketOut{};
@@ -430,7 +426,8 @@ void OptiTrackClient::CommandListenThread() {
 
     // handle command
     switch (PacketIn.iMessage) {
-      case NAT_MODELDEF:std::cout << "[Client] Received NAT_MODELDEF packet";
+      case NAT_MODELDEF:
+        std::cout << "[Client] Received NAT_MODELDEF packet";
         Unpack((char *) &PacketIn, outputs);
         break;
       case NAT_FRAMEOFDATA:
@@ -459,7 +456,8 @@ void OptiTrackClient::CommandListenThread() {
           ServerVersion[i] = server_info->Common.Version[i];
         }
         break;
-      case NAT_RESPONSE:gCommandResponseSize = PacketIn.nDataBytes;
+      case NAT_RESPONSE:
+        gCommandResponseSize = PacketIn.nDataBytes;
         if (gCommandResponseSize == 4)
           memcpy(&gCommandResponse,
                  &PacketIn.Data.lData[0],

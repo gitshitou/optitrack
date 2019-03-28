@@ -15,8 +15,14 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
 {
   nh.getParam("local", localIP_);
   nh.getParam("server", serverIP_);
+  nh.getParam("multicast_group", multicastGroup_);
 
-  client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_);
+  client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_, multicastGroup_);
+
+  ROS_INFO_STREAM("Local address: " << localIP_);
+  ROS_INFO_STREAM("Server address: " << serverIP_);
+  ROS_INFO_STREAM("Multicast group: " << multicastGroup_);
+
 
   if (!client_->initConnection()) {
     ROS_ERROR("Could not initiate communication with OptiTrack server!");

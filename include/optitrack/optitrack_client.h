@@ -133,7 +133,8 @@ namespace agile {
 class OptiTrackClient
 {
   public:
-    OptiTrackClient(const std::string& szMyIPAddress, const std::string& szServerIPAddress);
+    OptiTrackClient(const std::string& localIP, const std::string& serverIP,
+                    const std::string& multicastGroupIP);
 
     // Starts connection to mocap and initializes settings.
     bool initConnection();
@@ -161,8 +162,9 @@ class OptiTrackClient
     int dataSock_;
     in_addr ServerAddress;
     sockaddr_in HostAddr;
-    const char *my_address;
-    const char *server_address;
+    const std::string localIP_;     ///< IP addr of local NIC to use.
+    const std::string serverIP_;    ///< IP addr of server (for commands)
+    const std::string multicastIP_; ///< Multicast group (for UDP data)
 
     // Versioning
     int NatNetVersion[4] = {3, 0, 0, 0};

@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-    <arg name="server" value="192.168.1.12" />
-    <arg name="local" value="0.0.0.0" />
+    <arg name="server" default="192.168.1.12" />
+    <arg name="local" default="0.0.0.0" />
+    <arg name="multicast_group" default="239.255.42.99" />
 
     <node pkg="optitrack" type="optitrack_node" name="optitrack" output="screen">
         <param name="local" value="$(arg local)"/>
         <param name="server" value="$(arg server)"/>
+        <param name="multicast_group" value="$(arg multicast_group)"/>
     </node>
 
 </launch>

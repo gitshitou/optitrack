@@ -35,8 +35,9 @@ namespace optitrack {
   private:
     ros::NodeHandle nh_;
 
-    std::string localIP_; ///<
+    std::string localIP_; ///< IP address of local NIC to use
     std::string serverIP_; ///< IP address of remote OptiTrack server
+    std::string multicastGroup_; ///< Multicast group IP address
 
     std::unique_ptr<agile::OptiTrackClient> client_;
 
