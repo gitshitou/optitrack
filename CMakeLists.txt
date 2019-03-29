@@ -129,6 +129,7 @@ include_directories(
 ## Declare a C++ library
 add_library(optitrack_client SHARED
   src/optitrack_client.cpp
+  src/udp_socket.cpp
 )
 
 ## Add cmake target dependencies of the library

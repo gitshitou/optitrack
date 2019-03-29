@@ -41,154 +41,16 @@ OptiTrackClient::OptiTrackClient(const std::string& localIP,
 // ----------------------------------------------------------------------------
 
 bool OptiTrackClient::initConnection() {
-  const int optval = 0x100000;
-  socklen_t optval_size = 4;
-  int retval = -1;
-
-  //
-  // Create command socket
-  //
-
-  constexpr unsigned short ANY_PORT = 0;
-  CommandSocket = CreateCommandSocket(inet_addr(localIP_.c_str()), ANY_PORT);
-  if (CommandSocket == -1) {
-    printf("Command socket creation error\n");
-    return false;
-  }
-
-  // [optional] set to non-blocking
-  //u_long iMode=1;
-  //ioctlsocket(CommandSocket,FIONBIO,&iMode);
-
-  // create a 1MB buffer
-  setsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
-  getsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
-  if (optval != 0x100000) {
-    printf("[CommandSocket] ReceiveBuffer size = %d\n", optval);
-    return false;
-  }
-
-  // set a receive timeout
-  struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
-  retval = setsockopt(CommandSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-  if (retval == -1) {
-    close(CommandSocket);
-    printf("Error while setting CommandSocket timeout\n");
-    return false;
-  }
-
-  //
-  // Create data socket
-  //
-
-  if ((dataSock_ = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-    printf("Error while opening DataSocket\n");
-    return false;
-  }
-
-  // allow multiple clients on same machine to use address/port
-  int value = 1;
-  retval = setsockopt(dataSock_, SOL_SOCKET, SO_REUSEADDR, (char *) &value, sizeof(value));
-  if (retval == -1) {
-    close(dataSock_);
-    printf("Error while setting DataSocket options\n");
-    return false;
-  }
-
-  struct sockaddr_in dataSockAddr{};
-  dataSockAddr.sin_family = AF_INET;
-  dataSockAddr.sin_port = htons(PORT_DATA);
-  dataSockAddr.sin_addr.s_addr = htonl(INADDR_ANY); // bind to all local ifaces // use localIP_?
-  if (bind(dataSock_, (struct sockaddr *) &dataSockAddr, sizeof(struct sockaddr)) == -1) {
-    close(dataSock_);
-    printf("DataSocket bind failed\n");
-    return false;
-  }
-
-  // Join multicast group
-  struct ip_mreq Mreq{};
-  Mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_ADDRESS);
-  Mreq.imr_interface.s_addr = htonl(INADDR_ANY); // use localIP_?
-  retval = setsockopt(dataSock_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &Mreq, sizeof(Mreq));
-  if (retval == -1) {
-    printf("DataSocket join failed\n");
-    return false;
-  }
-
-  // create a 1MB buffer
-  setsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
-  getsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
-  if (optval != 0x100000) {
-    printf("[DataSocket] ReceiveBuffer size = %d\n", optval);
-    return false;
-  }
   
-  //
-  // Send command to the server
-  //
+  cmdsock_.reset(new acl::utils::UDPSocket(localIP_, PORT_DATA));
+  cmdsock_->setReceiveTimeout(1); // 1 sec
 
-  // server address
-  memset(&HostAddr, 0, sizeof(HostAddr));
-  HostAddr.sin_family = AF_INET;
-  HostAddr.sin_port = htons(PORT_COMMAND);
-  HostAddr.sin_addr.s_addr = inet_addr(serverIP_.c_str());
+  datasock_.reset(new acl::utils::UDPSocket(localIP_, PORT_COMMAND));
+  datasock_->setReceiveTimeout(1); // 1 sec
+  datasock_->joinMulticastGroup(multicastIP_);
 
-  // send initial connect request
-  agile::sPacket PacketOut{};
-  PacketOut.iMessage = NAT_CONNECT;
-  PacketOut.nDataBytes = 0;
-  int nTries = 3;
-  while (nTries--) {
-    ssize_t ret = sendto(CommandSocket,
-                        (char *)&PacketOut,
-                        4 + PacketOut.nDataBytes,
-                        0,
-                        (sockaddr *)&HostAddr,
-                        sizeof(HostAddr));
-    if (ret == -1) {
-      close(CommandSocket);
-      printf("[CommandSocket] Failed to send NAT_CONNECT to OptiTrack server.\n");
-      return false;
-    }
-    
-    printf("Attempting to connect to OptiTrack server...\n");
-
-    // Wait for server response. 
-    // This will contain the server tick frequency.
-    char ip_as_str[INET_ADDRSTRLEN];
-    sockaddr_in remoteAddr{};
-    agile::sPacket PacketIn{};
-    socklen_t addrlen = sizeof(struct sockaddr);
-    ssize_t nBytesRecvd = recvfrom(CommandSocket,
-                                  (char *)&PacketIn,
-                                  sizeof(agile::sPacket),
-                                  0,
-                                  (struct sockaddr *)&remoteAddr,
-                                  &addrlen);
-
-    if (nBytesRecvd == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        printf("[CommandSocket] Timed out waiting for OptiTrack response.\n");
-        continue;
-      }
-    }
-
-    // debug - print message
-    inet_ntop(AF_INET, &(remoteAddr.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-    printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
-          ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
-
-    unsigned char *ptr = (unsigned char *) &PacketIn;
-    agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
-
-    std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
-    server_frequency = server_info->HighResClockFrequency;
-    
-    return true;
-  }
-
-  printf("Initial connect request failed\n");
-  return false;
+  // attempt to connect to the server to retrieve basic info
+  return getServerInfo(serverInfo_);
 }
 
 // ----------------------------------------------------------------------------
@@ -258,6 +120,62 @@ void OptiTrackClient::getCommandPacket()
 
 // ----------------------------------------------------------------------------
 // Private Methods
+// ----------------------------------------------------------------------------
+
+bool OptiTrackClient::getServerInfo(sSender_Server& serverInfo)
+{
+  constexpr int MAX_NUM_TRIES = 3;
+
+  // attempt to send the connection request to the server nrTries times.
+  int nrTries = MAX_NUM_TRIES;
+  while (nrTries--) {
+
+    //
+    // send a message through the socket (non-blocking)
+    // 
+
+    {
+      // n.b.: the 4 is the size of the packet "header" (iMessage + nDataBytes)
+      // and the nDataBytes is the actual size of the payload
+      // create a packet with a connection request message
+      sPacket pkt{};
+      pkt.iMessage = NAT_CONNECT;
+      pkt.nDataBytes = 0;
+      size_t pktlen = pkt.nDataBytes + 4;
+
+      bool sent = cmdsock_->send(serverIP_, PORT_COMMAND, (char *)&pkt, pktlen);
+      if (!sent) return false;
+    }
+
+    std::cout << "[OptiTrackClient] Attempting to connect "
+                 "to OptiTrack server..." << std::flush;
+
+    {
+      sPacket pkt{};
+
+      // wait (with timeout) for server response
+      bool recvd = cmdsock_->receive((char *)&pkt, sizeof(pkt));
+
+      if (!recvd) {
+        std::cout << "timed out." << std::endl;
+        continue;
+      } else {
+        std::cout << "done!" << std::endl;
+      }
+
+      // unsigned char *ptr = (unsigned char *) &pkt;
+      // agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
+      
+      serverInfo = pkt.Data.SenderServer;
+    }
+
+    return true;
+  }
+
+  // number of tries exceeded
+  return false;
+}
+
 // ----------------------------------------------------------------------------
 
 // Funtion that assigns a time code values to 5 variables passed as arguments
@@ -352,42 +270,6 @@ int OptiTrackClient::SendCommand(char *szCommand) {
   }
 
   return gCommandResponse;
-}
-
-// ----------------------------------------------------------------------------
-
-int OptiTrackClient::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
-  static unsigned long ivalue;
-  static unsigned long bFlag;
-  int nlengthofsztemp = 64;
-  int sockfd;
-
-  // Create a blocking, datagram socket
-  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-    return -1;
-    printf("Error while opening CommandSocket\n");
-  }
-
-  // bind socket
-  struct sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(uPort);
-  addr.sin_addr.s_addr = IP_Address;
-  if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) == -1) {
-    close(sockfd);
-    printf("CommandSocket bind failed!\n");
-    return -1;
-  }
-
-  // set to broadcast mode
-  ivalue = 1;
-  if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (char *)&ivalue, sizeof(ivalue)) == -1) {
-    close(sockfd);
-    printf("Error while setting CommandSocket options\n");
-    return -1;
-  }
-
-  return sockfd;
 }
 
 // ----------------------------------------------------------------------------

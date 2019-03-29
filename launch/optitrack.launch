@@ -4,7 +4,7 @@
     <arg name="local" default="0.0.0.0" />
     <arg name="multicast_group" default="239.255.42.99" />
 
-    <node pkg="optitrack" type="optitrack_node" name="optitrack" output="screen">
+    <node pkg="optitrack" type="optitrack" name="optitrack" output="screen">
         <param name="local" value="$(arg local)"/>
         <param name="server" value="$(arg server)"/>
         <param name="multicast_group" value="$(arg multicast_group)"/>

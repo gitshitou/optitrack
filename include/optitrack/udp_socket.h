@@ -1,5 +1,5 @@
 /**
- * @file  udp_multicast_socket.h
+ * @file  udp_socket.h
  * @brief UDP Socket with Multicast Support. Wraps UNIX socket API.
  * @author Parker Lusk <parkerclusk@gmail.com>
  * @date 28 March 2019
@@ -11,6 +11,11 @@
 #include <string>
 #include <cstring>
 #include <cerrno>
+
+#include <unistd.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 
 namespace acl {
 namespace utils {
@@ -34,16 +39,18 @@ namespace utils {
 
 
 
-  class UDPMulticastSocket
+  class UDPSocket
   {
   public:
-    UDPMulticastSocket();
-    ~UDPMulticastSocket();
+    UDPSocket(const std::string& localIP, const int localPort);
+    UDPSocket(const int localPort);
+    ~UDPSocket();
 
     bool setReceiveTimeout(const int seconds = 1, const int micros = 0);
     bool joinMulticastGroup(const std::string& multicastGroupIP);
-    bool receive();
-    bool sendto(const std::string& remoteIP, const int remotePort);
+    bool receive(char * buf, size_t buflen);
+    bool send(const std::string& remoteIP, const int remotePort,
+              const char * buf, const size_t buflen);
 
   private:
     int socket_; ///< UNIX socket file descriptor

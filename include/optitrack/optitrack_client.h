@@ -35,6 +35,7 @@
 #include <thread>
 #include <cstring>
 #include <unordered_map>
+#include <memory>
 #include <unistd.h>
 #include <linux/limits.h>
 #include <netinet/in.h>
@@ -42,6 +43,8 @@
 #include <netdb.h>
 #include <errno.h>
 #include <boost/optional.hpp>
+
+#include "optitrack/udp_socket.h"
 
 
 /// @todo: varun move these defines to a enum
@@ -154,8 +157,6 @@ class OptiTrackClient
 
     bool IPAddress_StringToAddr(char *szNameOrAddress, struct in_addr *Address) const;
 
-    int CreateCommandSocket (in_addr_t IP_Address, unsigned short uPort);
-
   private:
     // Sockets
     int CommandSocket;
@@ -165,6 +166,11 @@ class OptiTrackClient
     const std::string localIP_;     ///< IP addr of local NIC to use.
     const std::string serverIP_;    ///< IP addr of server (for commands)
     const std::string multicastIP_; ///< Multicast group (for UDP data)
+
+    std::unique_ptr<acl::utils::UDPSocket> datasock_; ///< UDP/Multicast socket for data
+    std::unique_ptr<acl::utils::UDPSocket> cmdsock_; ///< UDP socket for commands
+
+    sSender_Server serverInfo_; ///< The response of the inital connection request.
 
     // Versioning
     int NatNetVersion[4] = {3, 0, 0, 0};
@@ -199,6 +205,8 @@ class OptiTrackClient
     void Unpack (char *pData, std::vector<Packet> &outputs);
 
     int SendCommand (char *szCommand);
+
+    bool getServerInfo(sSender_Server& serverInfo);
 
     std::unordered_map<int, std::string> rigid_body_map;
 
