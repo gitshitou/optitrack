@@ -389,7 +389,7 @@ void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
         bool bTrackingValid = params & 0x01;
 
         // todo make this an int so it's obvious when it's unset
-        output_packet_.tracking_valid = true;
+        output_packet_.tracking_valid = bTrackingValid;
         if (bTrackingValid) {
           // printf("Tracking Valid: True\n");
         } else {
