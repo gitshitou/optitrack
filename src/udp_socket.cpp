@@ -36,7 +36,7 @@ UDPSocket::UDPSocket(const std::string& localIP, const int localPort)
   memset(&localAddr_, 0, sizeof(localAddr_));
   localAddr_.sin_family = AF_INET;
   localAddr_.sin_port = htons(localPort);
-  localAddr_.sin_addr.s_addr = inet_addr(localIP.c_str()); // or INADDR_ANY
+  localAddr_.sin_addr.s_addr = inet_addr(localIP.c_str()); // htonl(INADDR_ANY)
 
   // bind the socket to the local address
   if (bind(socket_, (sockaddr *)&localAddr_, sizeof(localAddr_) ) == -1) {
@@ -48,10 +48,8 @@ UDPSocket::UDPSocket(const std::string& localIP, const int localPort)
 // ----------------------------------------------------------------------------
 
 UDPSocket::UDPSocket(const int localPort)
-{
   // use INADDR_ANY for localIP
-  UDPSocket("0.0.0.0", localPort);
-}
+: UDPSocket("0.0.0.0", localPort) {}
 
 // ----------------------------------------------------------------------------
 
@@ -75,6 +73,14 @@ bool UDPSocket::setReceiveTimeout(const int seconds, const int micros)
 
 bool UDPSocket::joinMulticastGroup(const std::string& multicastGroupIP)
 {
+  // for multicast, the local addr is required to be INADDR_ANY (0.0.0.0).
+  // So we will check to see if a specific local IP was given.
+  // see https://stackoverflow.com/a/23718680
+  if (localAddr_.sin_addr.s_addr != htonl(INADDR_ANY)) {
+    throw SocketException("Attempting to join multicast group "
+                          "but a localIP was specified.");
+  }
+
   // fill multicast request struct
   struct ip_mreq mreq{};
   mreq.imr_multiaddr.s_addr = inet_addr(multicastGroupIP.c_str());

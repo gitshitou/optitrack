@@ -52,6 +52,8 @@ namespace optitrack {
      * @return     Pose of rigid body (flu) w.r.t optitrack (ENU)
      */
     geometry_msgs::Pose toENUPose(const double* p, const double* q);
+
+    int64_t nanotimeLPF(double alpha, int64_t x);
   };
 
 }

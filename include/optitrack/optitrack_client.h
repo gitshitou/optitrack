@@ -130,7 +130,7 @@ namespace agile {
       // Starts connection to mocap and initializes settings.
       bool initConnection();
 
-      void spinOnce();
+      bool spinOnce();
 
       std::vector<Packet> getPackets() const { return processedPackets_; }
 
@@ -162,7 +162,7 @@ namespace agile {
 
       void DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID);
 
-      void Unpack (char *pData, std::vector<Packet> &outputs);
+      void Unpack(char *pData, std::vector<Packet> &outputs);
 
       bool getServerInfo(sSender_Server& serverInfo);
 

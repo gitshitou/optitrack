@@ -51,7 +51,9 @@ void OptiTrack::spin()
   while (ros::ok()) {
 
     // allow mocap client to receive optitrack packets
-    client_->spinOnce();
+    if (!client_->spinOnce()) {
+      ROS_ERROR_THROTTLE(1, "Could not communicate with OptiTrack server!");
+    }
 
     //
     // Process OptiTrack "packets" (i.e., rigid bodies)
@@ -83,6 +85,8 @@ void OptiTrack::spin()
         name.erase(std::remove_if(name.begin(), name.end(),
               [](auto const& c) -> bool { return !std::isalnum(c); }
             ), name.end());
+
+        ROS_WARN_STREAM("Found '" << name << "'");
 
         std::string topic = "/" + name + "/optitrack";
         rosPublishers[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);;

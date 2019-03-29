@@ -46,15 +46,17 @@ OptiTrackClient::OptiTrackClient(const std::string& localIP,
 bool OptiTrackClient::initConnection() {
   
   try {
-    cmdsock_.reset(new acl::utils::UDPSocket(localIP_, dataPort_));
-    cmdsock_->setReceiveTimeout(1); // 1 sec
+    cmdsock_.reset(new acl::utils::UDPSocket(localIP_, 0));
+    cmdsock_->setReceiveTimeout(0,500000); // 500 msec
 
-    datasock_.reset(new acl::utils::UDPSocket(localIP_, commandPort_));
-    datasock_->setReceiveTimeout(1); // 1 sec
+    datasock_.reset(new acl::utils::UDPSocket(dataPort_));
+    datasock_->setReceiveTimeout(0,500000); // 500 msec
     datasock_->joinMulticastGroup(multicastIP_);
   } catch (...) {
     return false;
   }
+
+  return true;
 
   // attempt to connect to the server to retrieve basic info
   return getServerInfo(serverInfo_);
@@ -62,7 +64,7 @@ bool OptiTrackClient::initConnection() {
 
 // ----------------------------------------------------------------------------
 
-void OptiTrackClient::spinOnce()
+bool OptiTrackClient::spinOnce()
 {
   // clear previous vector of processed packets
   processedPackets_.clear();
@@ -73,6 +75,19 @@ void OptiTrackClient::spinOnce()
     bool recvd = datasock_->receive(data, sizeof(data));
 
     if (recvd) Unpack(data, processedPackets_);
+    else return false;
+  }
+
+  // Request current model descriptions from server (sRigidBodyDescription)
+  {
+    sPacket pkt{};
+    pkt.iMessage = NAT_REQUEST_MODELDEF;
+    pkt.nDataBytes = 0;
+    const size_t pktlen = pkt.nDataBytes + 4;
+
+    bool sent = cmdsock_->send(serverIP_, commandPort_, (char *)&pkt, pktlen);
+
+    if (!sent) return false;
   }
 
   // Receive one chunk of command response (sRigidBodyDescription --- name)
@@ -81,7 +96,10 @@ void OptiTrackClient::spinOnce()
     bool recvd = cmdsock_->receive(data, sizeof(data));
 
     if (recvd) Unpack(data, processedPackets_);
+    else return false;
   }
+
+  return true;
 }
 
 // ----------------------------------------------------------------------------
