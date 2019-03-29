@@ -56,8 +56,6 @@ bool OptiTrackClient::initConnection() {
     return false;
   }
 
-  return true;
-
   // attempt to connect to the server to retrieve basic info
   return getServerInfo(serverInfo_);
 }
@@ -147,10 +145,18 @@ bool OptiTrackClient::getServerInfo(sSender_Server& serverInfo)
         std::cout << "done!" << std::endl;
       }
 
-      // unsigned char *ptr = (unsigned char *) &pkt;
-      // agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
+      // TODO: not sure why I can't just use the union def inside sPacket...
+      unsigned char *ptr = (unsigned char *) &pkt;
+      agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
+      serverInfo = *server_info;
+
+      // TODO: broken?
+      // std::cout << "NatNet version: " << server_info->Common.NatNetVersion[0] << "."
+      //                                 << server_info->Common.NatNetVersion[1] << "."
+      //                                 << server_info->Common.NatNetVersion[2] << "."
+      //                                 << server_info->Common.NatNetVersion[3] << std::endl;
       
-      serverInfo = pkt.Data.SenderServer;
+      // serverInfo = pkt.Data.SenderServer;
     }
 
     return true;
@@ -172,8 +178,9 @@ uint64_t OptiTrackClient::getTimestamp()
 void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
   // Checks for NatNet Version number. Used later in function.
   // Packets may be different depending on NatNet version.
-  int major = serverInfo_.Common.NatNetVersion[0];
-  int minor = serverInfo_.Common.NatNetVersion[1];
+  // TODO: Check 'getServerInformation' about why this is hard coded
+  int major = 3; // serverInfo_.Common.NatNetVersion[0];
+  int minor = 1; // serverInfo_.Common.NatNetVersion[1];
 
   char *ptr = pData;
 

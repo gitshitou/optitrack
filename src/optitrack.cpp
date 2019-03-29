@@ -27,7 +27,6 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
   ROS_INFO_STREAM("Command port: " << commandPort_);
   ROS_INFO_STREAM("Data port: " << dataPort_);
 
-
   if (!client_->initConnection()) {
     ROS_ERROR("Could not initiate communication with OptiTrack server!");
     ros::shutdown();
@@ -38,15 +37,8 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
 
 void OptiTrack::spin()
 {
-  // Keep track of ntime offset.
-  int64_t offset_between_windows_and_linux = std::numeric_limits<int64_t>::max();
-
-  // Some vars to calculate twist/acceleration and dts
-  // Also keeps track of the various publishers
+  // keep track of the various publishers
   std::map<int, ros::Publisher> rosPublishers;
-  std::map<int, geometry_msgs::PoseStamped> pastStateMessages;
-
-  bool time_set = false;
 
   // Do some debouncing on the number of lost packets. It is not critical
   // unless many consecutive packets are being dropped.
@@ -60,7 +52,7 @@ void OptiTrack::spin()
       if (++lostPackets >= MAX_LOST_PACKETS) {
         ROS_ERROR_THROTTLE(1, "Could not communicate with OptiTrack server!");
       } else {
-        ROS_WARN_THROTTLE(0.5, "Dropped packets.");
+        ROS_WARN_THROTTLE(1, "Dropped packets.");
       }
     } else {
       lostPackets = 0;
@@ -75,19 +67,6 @@ void OptiTrack::spin()
 
       // Skip this rigid body if tracking is invalid
       if (!pkt.tracking_valid) continue;
-
-      // estimate the windows to linux constant offset by taking the minimum seen offset.
-      // @TODO: Make offset a rolling average instead of a latching offset.
-      int64_t offset = pkt.transmit_timestamp - pkt.receive_timestamp;
-      if (offset < offset_between_windows_and_linux && !time_set){
-        offset_between_windows_and_linux = offset;
-        time_set = true;
-      }
-      uint64_t packet_ntime = pkt.mid_exposure_timestamp - offset_between_windows_and_linux;
-
-      // Get past state and publisher (if they exist)
-      ros::Publisher publisher;
-      geometry_msgs::PoseStamped currentState;
 
       // Initialize publisher for rigid body if not exist.
       if (rosPublishers.find(pkt.rigid_body_id) == rosPublishers.end()) {
@@ -104,9 +83,17 @@ void OptiTrack::spin()
       }
 
       // Get saved publisher and last state
-      publisher = rosPublishers[pkt.rigid_body_id];
+      ros::Publisher publisher = rosPublishers[pkt.rigid_body_id];
+
+      // estimate the windows to linux transmit time
+      int64_t offset = pkt.transmit_timestamp - pkt.receive_timestamp;
+      int64_t transmit_time = nanotimeLPF(0.975, offset);
+
+      // use the estimate to calculate the the time of the associated pose
+      uint64_t packet_ntime = pkt.mid_exposure_timestamp - transmit_time;
 
       // Add timestamp
+      geometry_msgs::PoseStamped currentState;
       currentState.header.stamp = ros::Time(packet_ntime/1e9, packet_ntime%(int64_t)1e9);
 
       // convert from raw optitrack frame to ENU with body flu
@@ -114,9 +101,6 @@ void OptiTrack::spin()
 
       // Loop through markers and convert positions from NUE to ENU
       // @TODO since the state message does not understand marker locations.
-
-      // Save state for future acceleration and twist computations
-      pastStateMessages[pkt.rigid_body_id] = currentState;
 
       // Publish ROS state.
       publisher.publish(currentState);
