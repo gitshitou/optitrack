@@ -32,8 +32,11 @@ namespace agile {
 
 OptiTrackClient::OptiTrackClient(const std::string& localIP,
                                  const std::string& serverIP,
-                                 const std::string& multicastGroupIP)
-: localIP_(localIP), serverIP_(serverIP), multicastIP_(multicastGroupIP)
+                                 const std::string& multicastGroupIP,
+                                 const int commandPort,
+                                 const int dataPort)
+: localIP_(localIP), serverIP_(serverIP), multicastIP_(multicastGroupIP),
+  commandPort_(commandPort), dataPort_(dataPort)
 {
 
 }
@@ -42,12 +45,16 @@ OptiTrackClient::OptiTrackClient(const std::string& localIP,
 
 bool OptiTrackClient::initConnection() {
   
-  cmdsock_.reset(new acl::utils::UDPSocket(localIP_, PORT_DATA));
-  cmdsock_->setReceiveTimeout(1); // 1 sec
+  try {
+    cmdsock_.reset(new acl::utils::UDPSocket(localIP_, dataPort_));
+    cmdsock_->setReceiveTimeout(1); // 1 sec
 
-  datasock_.reset(new acl::utils::UDPSocket(localIP_, PORT_COMMAND));
-  datasock_->setReceiveTimeout(1); // 1 sec
-  datasock_->joinMulticastGroup(multicastIP_);
+    datasock_.reset(new acl::utils::UDPSocket(localIP_, commandPort_));
+    datasock_->setReceiveTimeout(1); // 1 sec
+    datasock_->joinMulticastGroup(multicastIP_);
+  } catch (...) {
+    return false;
+  }
 
   // attempt to connect to the server to retrieve basic info
   return getServerInfo(serverInfo_);
@@ -55,67 +62,26 @@ bool OptiTrackClient::initConnection() {
 
 // ----------------------------------------------------------------------------
 
-void OptiTrackClient::getDataPacket()
+void OptiTrackClient::spinOnce()
 {
-  char szData[20000];
-  socklen_t addr_len = sizeof(struct sockaddr);
-  sockaddr_in TheirAddress{};
-
-  // Block until we receive a datagram from the network
-  // (from anyone including ourselves)
-  //ssize_t nDataBytesReceived =
-  recvfrom(dataSock_,
-           szData,
-           sizeof(szData),
-           0,
-           (sockaddr *) &TheirAddress,
-           &addr_len);
-  // Once we have bytes recieved Unpack organizes all the data
-  //
-  // Clear vector of previous packets.
+  // clear previous vector of processed packets
   processedPackets_.clear();
-  Unpack(szData, processedPackets_);
 
-  /*if (outputs.size() > 0) {
-      PublishPacketRos(outputs[0]);
-    }*/
-}
+  // Receive one chunk of data (sRigidBodyData --- pose, mean error)
+  {
+    char data[MAX_PACKETSIZE];
+    bool recvd = datasock_->receive(data, sizeof(data));
 
-// ----------------------------------------------------------------------------
+    if (recvd) Unpack(data, processedPackets_);
+  }
 
-void OptiTrackClient::getCommandPacket()
-{
-    agile::sPacket PacketOut{};
-    PacketOut.iMessage = NAT_REQUEST_MODELDEF;  //NAT_FRAMEOFDATA;     //NAT_REQUEST_MODELDEF;
-    PacketOut.nDataBytes = 0;
-    ssize_t iRet = sendto(CommandSocket,
-                        (char *) &PacketOut,
-                        4 + PacketOut.nDataBytes,
-                        0,
-                        (sockaddr *) &HostAddr,
-                        sizeof(HostAddr));
-      // Wait for server response. 
-      // This will contain the server tick frequency.
-    char ip_as_str[INET_ADDRSTRLEN];
-    ssize_t nDataBytesReceived;
-    sockaddr_in TheirAddress{};
-    agile::sPacket PacketIn{};
-    socklen_t addr_len = sizeof(struct sockaddr);
-    char szData[20000]; //@Todo: this value is hard-coded
-    nDataBytesReceived = recvfrom(CommandSocket,
-                                    szData,
-                                    sizeof(szData),
-                                    0,
-                                    (struct sockaddr *) &TheirAddress,
-                                    &addr_len);
+  // Receive one chunk of command response (sRigidBodyDescription --- name)
+  {
+    char data[MAX_PACKETSIZE];
+    bool recvd = cmdsock_->receive(data, sizeof(data));
 
-      // debug - print message
-      
-/*      inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-      printf("[Client] Received command from %s: iMessage=%d, nDataBytes=%d\n",
-            ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);*/
-      // processedPackets_.clear();
-      Unpack(szData, processedPackets_);
+    if (recvd) Unpack(data, processedPackets_);
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -141,9 +107,9 @@ bool OptiTrackClient::getServerInfo(sSender_Server& serverInfo)
       sPacket pkt{};
       pkt.iMessage = NAT_CONNECT;
       pkt.nDataBytes = 0;
-      size_t pktlen = pkt.nDataBytes + 4;
+      const size_t pktlen = pkt.nDataBytes + 4;
 
-      bool sent = cmdsock_->send(serverIP_, PORT_COMMAND, (char *)&pkt, pktlen);
+      bool sent = cmdsock_->send(serverIP_, commandPort_, (char *)&pkt, pktlen);
       if (!sent) return false;
     }
 
@@ -178,221 +144,9 @@ bool OptiTrackClient::getServerInfo(sSender_Server& serverInfo)
 
 // ----------------------------------------------------------------------------
 
-// Funtion that assigns a time code values to 5 variables passed as arguments
-// Requires an integer from the packet as the timecode and timecodeSubframe
-bool OptiTrackClient::DecodeTimecode(unsigned int inTimecode,
-                                     unsigned int inTimecodeSubframe,
-                                     int *hour, int *minute, int *second,
-                                     int *frame, int *subframe)
+uint64_t OptiTrackClient::getTimestamp()
 {
-  bool bValid = true;
-
-  *hour = (inTimecode >> 24) & 255;
-  *minute = (inTimecode >> 16) & 255;
-  *second = (inTimecode >> 8) & 255;
-  *frame = inTimecode & 255;
-  *subframe = inTimecodeSubframe;
-
-  return bValid;
-}
-
-// ----------------------------------------------------------------------------
-
-// Takes timecode and assigns it to a string
-bool OptiTrackClient::TimecodeStringify(unsigned int inTimecode,
-                                        unsigned int inTimecodeSubframe,
-                                        char *Buffer, size_t BufferSize)
-{
-  bool bValid = false;
-  int hour, minute, second, frame, subframe;
-  bValid = DecodeTimecode(inTimecode, inTimecodeSubframe,
-                          &hour, &minute, &second, &frame, &subframe);
-
-  snprintf(Buffer, BufferSize, "%2d:%2d:%2d:%2d.%d",
-           hour, minute, second, frame, subframe);
-  for (unsigned int i=0; i<strlen(Buffer); i++)
-    if (Buffer[i] == ' ')
-      Buffer[i] = '0';
-
-  return bValid;
-}
-
-// ----------------------------------------------------------------------------
-
-void OptiTrackClient::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID)
-{
-  if (pOutEntityID)
-    *pOutEntityID = sourceID >> 16;
-
-  if (pOutMemberID)
-    *pOutMemberID = sourceID & 0x0000ffff;
-}
-
-// ----------------------------------------------------------------------------
-
-// Send a command to Motive.
-int OptiTrackClient::SendCommand(char *szCommand) {
-  // reset global result
-  gCommandResponse = -1;
-
-  // format command packet
-  sPacket commandPacket{};
-  strcpy(commandPacket.Data.szData, szCommand);
-  commandPacket.iMessage = NAT_REQUEST;
-  commandPacket.nDataBytes =
-      (unsigned short) (strlen(commandPacket.Data.szData) + 1);
-
-  // send command and wait (a bit)
-  // for command response to set global response var in CommandListenThread
-  ssize_t iRet = sendto(CommandSocket,
-                        (char *) &commandPacket,
-                        4 + commandPacket.nDataBytes,
-                        0,
-                        (sockaddr *) &HostAddr,
-                        sizeof(HostAddr));
-  if (iRet == -1) {
-    printf("Socket error sending command");
-  } else {
-    int waitTries = 5;
-    while (waitTries--) {
-      if (gCommandResponse != -1)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    }
-
-    if (gCommandResponse == -1) {
-      printf("Command response not received (timeout)");
-    } else if (gCommandResponse == 0) {
-      printf("Command response received with success");
-    } else if (gCommandResponse > 0) {
-      printf("Command response received with errors");
-    }
-  }
-
-  return gCommandResponse;
-}
-
-// ----------------------------------------------------------------------------
-
-// Command response listener thread
-void OptiTrackClient::CommandListenThread() {
-  char ip_as_str[INET_ADDRSTRLEN];
-  ssize_t nDataBytesReceived;
-  sockaddr_in TheirAddress{};
-  sPacket PacketIn{};
-  socklen_t addr_len = sizeof(struct sockaddr);
-
-  while (true) {
-    // blocking
-    nDataBytesReceived = recvfrom(CommandSocket,
-                                  (char *)&PacketIn,
-                                  sizeof(sPacket),
-                                  0,
-                                  (struct sockaddr *)&TheirAddress,
-                                  &addr_len);
-
-    if ((nDataBytesReceived == 0) || (nDataBytesReceived == -1))
-      continue;
-
-    // debug - print message
-    inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-    printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
-           ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
-
-    unsigned char *ptr = (unsigned char *) &PacketIn;
-    sSender_Server *server_info = (sSender_Server *) (ptr + 4);
-
-    std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
-
-     std::vector<Packet> outputs;
-
-    // handle command
-    switch (PacketIn.iMessage) {
-      case NAT_MODELDEF:
-        std::cout << "[Client] Received NAT_MODELDEF packet";
-        Unpack((char *) &PacketIn, outputs);
-        break;
-      case NAT_FRAMEOFDATA:
-        std::cout << "[Client] Received NAT_FRAMEOFDATA packet";
-        Unpack((char *) &PacketIn, outputs);
-        break;
-      case NAT_SERVERINFO:
-        // Streaming app's name, e.g., Motive
-        std::cout << server_info->Common.szName << " ";
-        // Streaming app's version, e.g., 2.0.0.0
-        for (int i = 0; i < 4; ++i) {
-          std::cout << static_cast<int>(server_info->Common.Version[i]) << ".";
-        }
-        std::cout << '\b' << std::endl;
-        // Streaming app's NatNet version, e.g., 3.0.0.0
-        std::cout << "NatNet ";
-        int digit;
-        for (int i = 0; i < 4; ++i) {
-          digit = static_cast<int>(server_info->Common.NatNetVersion[i]);
-          std::cout << digit << ".";
-        }
-        std::cout << '\b' << std::endl;
-        // Save versions in global variables
-        for (int i = 0; i < 4; i++) {
-          NatNetVersion[i] = server_info->Common.NatNetVersion[i];
-          ServerVersion[i] = server_info->Common.Version[i];
-        }
-        break;
-      case NAT_RESPONSE:
-        gCommandResponseSize = PacketIn.nDataBytes;
-        if (gCommandResponseSize == 4)
-          memcpy(&gCommandResponse,
-                 &PacketIn.Data.lData[0],
-                 gCommandResponseSize);
-        else {
-          memcpy(&gCommandResponseString[0],
-                 &PacketIn.Data.cData[0],
-                 gCommandResponseSize);
-          printf("Response : %s", gCommandResponseString);
-          gCommandResponse = 0;   // ok
-        }
-        break;
-      case NAT_UNRECOGNIZED_REQUEST:
-        printf("[Client] received 'unrecognized request'\n");
-        gCommandResponseSize = 0;
-        gCommandResponse = 1;       // err
-        break;
-      case NAT_MESSAGESTRING:
-        printf("[Client] Received message: %s\n",
-               PacketIn.Data.szData);
-        break;
-    }
-  }
-}
-
-// ----------------------------------------------------------------------------
-
-// Convert IP address string to address
-bool OptiTrackClient::IPAddress_StringToAddr(char *szNameOrAddress,
-                            struct in_addr *Address) const{
-  int retVal;
-  struct sockaddr_in saGNI;
-  char hostName[256];
-  char servInfo[256];
-  u_short port;
-  port = 0;
-
-  // Set up sockaddr_in structure which is passed to the getnameinfo function
-  saGNI.sin_family = AF_INET;
-  saGNI.sin_addr.s_addr = inet_addr(szNameOrAddress);
-  saGNI.sin_port = htons(port);
-
-  // getnameinfo in WS2tcpip is protocol independent
-  // and resolves address to ANSI host name
-  if ((retVal = getnameinfo((sockaddr *) &saGNI, sizeof(sockaddr), hostName,
-                            256, servInfo, 256, NI_NUMERICSERV)) != 0) {
-    // Returns error if getnameinfo failed
-    printf("[PacketClient] GetHostByAddr failed\n");
-    return false;
-  }
-
-  Address->s_addr = saGNI.sin_addr.s_addr;
-  return true;
+  return std::chrono::high_resolution_clock::now().time_since_epoch() / std::chrono::nanoseconds(1);
 }
 
 // ----------------------------------------------------------------------------
@@ -400,8 +154,8 @@ bool OptiTrackClient::IPAddress_StringToAddr(char *szNameOrAddress,
 void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
   // Checks for NatNet Version number. Used later in function.
   // Packets may be different depending on NatNet version.
-  int major = NatNetVersion[0];
-  int minor = NatNetVersion[1];
+  int major = serverInfo_.Common.NatNetVersion[0];
+  int minor = serverInfo_.Common.NatNetVersion[1];
 
   char *ptr = pData;
 
@@ -936,7 +690,9 @@ void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
       timestamp = (double) fTemp;
     }
 
-    // Convert to microseconds
+    const uint64_t server_frequency = serverInfo_.HighResClockFrequency;
+
+    // Convert to microseconds: timestamp since software start
     uint64_t ms_timestamp = (timestamp*1e9)/server_frequency;
     // printf("Timestamp : %3.3f\n", timestamp);
 
@@ -1004,8 +760,7 @@ void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
       if(print_info)
       printf("Type : %d\n", type);
 
-      if (type == 0)   // markerset
-      {
+      if (type == 0) {   // markerset
         // name
         char szName[256];
         strcpy(szName, ptr);
@@ -1029,8 +784,7 @@ void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
           if(print_info)
           printf("Marker Name: %s\n", szName);
         }
-      } else if (type == 1)   // rigid body
-      {
+      } else if (type == 1) {  // rigid body
         char szName[MAX_NAMELENGTH];  
         if (major >= 2) {
           // name
@@ -1187,6 +941,58 @@ void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
     // printf("Unrecognized Packet Type.\n");
   }
 
+}
+
+// ----------------------------------------------------------------------------
+
+// Funtion that assigns a time code values to 5 variables passed as arguments
+// Requires an integer from the packet as the timecode and timecodeSubframe
+bool OptiTrackClient::DecodeTimecode(unsigned int inTimecode,
+                                     unsigned int inTimecodeSubframe,
+                                     int *hour, int *minute, int *second,
+                                     int *frame, int *subframe)
+{
+  bool bValid = true;
+
+  *hour = (inTimecode >> 24) & 255;
+  *minute = (inTimecode >> 16) & 255;
+  *second = (inTimecode >> 8) & 255;
+  *frame = inTimecode & 255;
+  *subframe = inTimecodeSubframe;
+
+  return bValid;
+}
+
+// ----------------------------------------------------------------------------
+
+// Takes timecode and assigns it to a string
+bool OptiTrackClient::TimecodeStringify(unsigned int inTimecode,
+                                        unsigned int inTimecodeSubframe,
+                                        char *Buffer, size_t BufferSize)
+{
+  bool bValid = false;
+  int hour, minute, second, frame, subframe;
+  bValid = DecodeTimecode(inTimecode, inTimecodeSubframe,
+                          &hour, &minute, &second, &frame, &subframe);
+
+  snprintf(Buffer, BufferSize, "%2d:%2d:%2d:%2d.%d",
+           hour, minute, second, frame, subframe);
+  for (unsigned int i=0; i<strlen(Buffer); i++)
+    if (Buffer[i] == ' ')
+      Buffer[i] = '0';
+
+  return bValid;
+}
+
+// ----------------------------------------------------------------------------
+
+void OptiTrackClient::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID)
+{
+  if (pOutEntityID)
+    *pOutEntityID = sourceID >> 16;
+
+  if (pOutMemberID)
+    *pOutMemberID = sourceID & 0x0000ffff;
 }
 
 } // ns agile

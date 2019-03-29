@@ -15,13 +15,17 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
 {
   nh.getParam("local", localIP_);
   nh.getParam("server", serverIP_);
-  nh.getParam("multicast_group", multicastGroup_);
+  nh.getParam("multicast_group", multicastIP_);
+  nh.getParam("command_port", commandPort_);
+  nh.getParam("data_port", dataPort_);
 
-  client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_, multicastGroup_);
+  client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_, multicastIP_, commandPort_, dataPort_);
 
   ROS_INFO_STREAM("Local address: " << localIP_);
   ROS_INFO_STREAM("Server address: " << serverIP_);
-  ROS_INFO_STREAM("Multicast group: " << multicastGroup_);
+  ROS_INFO_STREAM("Multicast group: " << multicastIP_);
+  ROS_INFO_STREAM("Command port: " << commandPort_);
+  ROS_INFO_STREAM("Data port: " << dataPort_);
 
 
   if (!client_->initConnection()) {
@@ -42,34 +46,18 @@ void OptiTrack::spin()
   std::map<int, ros::Publisher> rosPublishers;
   std::map<int, geometry_msgs::PoseStamped> pastStateMessages;
 
-  int count_ = 0;
-  int print_freq_ = 1500;
-
   bool time_set = false;
 
   while (ros::ok()) {
-    //increase count and publish
-    if (count_ % print_freq_ == 0) {
-      std::cout<<"iter " + std::to_string(count_)<<std::endl;
-    }
 
-    // Wait for mocap Data packet
-    client_->getDataPacket();
-    if (count_ % print_freq_ == 0) {
-      std::cout<<"Data received"<<std::endl;
-    }    
-    // Wait for data description     
-    client_->getCommandPacket();
-    if (count_ % print_freq_ == 0) {
-      std::cout<<"CommandPacket received"<<std::endl;
-    }
+    // allow mocap client to receive optitrack packets
+    client_->spinOnce();
 
-    
     //
     // Process OptiTrack "packets" (i.e., rigid bodies)
     //
 
-    std::vector<agile::Packet> mocapPackets = client_->getPackets();
+    auto mocapPackets = client_->getPackets();
     for (const auto& pkt : mocapPackets) {
 
       // Skip this rigid body if tracking is invalid
@@ -117,8 +105,6 @@ void OptiTrack::spin()
 
       // Publish ROS state.
       publisher.publish(currentState);
-
-      ++count_;
     }
   }
 }
@@ -147,6 +133,17 @@ geometry_msgs::Pose OptiTrack::toENUPose(const double* p, const double* q)
   geometry_msgs::Pose pose;
   tf2::toMsg(T_OB, pose);
   return pose;
+}
+
+// ----------------------------------------------------------------------------
+
+int64_t OptiTrack::nanotimeLPF(double alpha, int64_t x)
+{
+  static int64_t xhat = x;
+
+  xhat = alpha*xhat + (1-alpha)*x;
+
+  return xhat;
 }
 
 } // ns optitrack
