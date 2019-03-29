@@ -48,11 +48,22 @@ void OptiTrack::spin()
 
   bool time_set = false;
 
+  // Do some debouncing on the number of lost packets. It is not critical
+  // unless many consecutive packets are being dropped.
+  constexpr int MAX_LOST_PACKETS = 4;
+  int lostPackets = 0;
+
   while (ros::ok()) {
 
     // allow mocap client to receive optitrack packets
     if (!client_->spinOnce()) {
-      ROS_ERROR_THROTTLE(1, "Could not communicate with OptiTrack server!");
+      if (++lostPackets >= MAX_LOST_PACKETS) {
+        ROS_ERROR_THROTTLE(1, "Could not communicate with OptiTrack server!");
+      } else {
+        ROS_WARN_THROTTLE(0.5, "Dropped packets.");
+      }
+    } else {
+      lostPackets = 0;
     }
 
     //
