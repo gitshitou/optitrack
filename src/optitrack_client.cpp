@@ -1,341 +1,183 @@
-#include "motionCaptureClientFramework.h"
+/**
+ * MIT License
+ * 
+ * Copyright (c) 2018 AgileDrones
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+/**
+ * Originally from: https://github.com/mit-fast/OptiTrack-Motive-2-Client
+ */
+
+#include "optitrack/optitrack_client.h"
 
 namespace agile {
 
-motionCaptureClientFramework::motionCaptureClientFramework(std::string& szMyIPAddress, std::string& szServerIPAddress)
-{
-  // Convert address std::string to c_str.
-  my_address = szMyIPAddress.c_str();
-  server_address = szServerIPAddress.c_str();
+OptiTrackClient::OptiTrackClient(const std::string& localIP,
+                                 const std::string& serverIP,
+                                 const std::string& multicastGroupIP,
+                                 const int commandPort,
+                                 const int dataPort)
+: localIP_(localIP), serverIP_(serverIP), multicastIP_(multicastGroupIP),
+  commandPort_(commandPort), dataPort_(dataPort) {}
 
-  // init connection
-  ok_ = initConnection();
+// ----------------------------------------------------------------------------
 
-  if (!ok_) {
-    printf("\n\nCould not initiate communication with OptiTrack!\n");
-    exit(-1);
+bool OptiTrackClient::initConnection() {
+  
+  try {
+    cmdsock_.reset(new acl::utils::UDPSocket(localIP_, 0));
+    cmdsock_->setReceiveTimeout(0,500000); // 500 msec
+
+    datasock_.reset(new acl::utils::UDPSocket(dataPort_));
+    datasock_->setReceiveTimeout(0,500000); // 500 msec
+    datasock_->joinMulticastGroup(multicastIP_);
+  } catch (...) {
+    return false;
   }
+
+  // attempt to connect to the server to retrieve basic info
+  return getServerInfo(serverInfo_);
 }
 
-bool motionCaptureClientFramework::initConnection() {
-  const int optval = 0x100000;
-  socklen_t optval_size = 4;
-  int retval = -1;
+// ----------------------------------------------------------------------------
 
-  printf("Client: %s\n", my_address);
-  printf("Server: %s\n", server_address);
-  printf("Multicast Group: %s\n", MULTICAST_ADDRESS);
+bool OptiTrackClient::spinOnce()
+{
+  // clear previous vector of processed packets
+  processedPackets_.clear();
 
-  //
-  // Create command socket
-  //
+  // Receive one chunk of data (sRigidBodyData --- pose, mean error)
+  {
+    char data[MAX_PACKETSIZE];
+    bool recvd = datasock_->receive(data, sizeof(data));
 
-  unsigned short port = 8000;
-  CommandSocket = CreateCommandSocket(inet_addr(my_address), port);
-  if (CommandSocket == -1) {
-    printf("Command socket creation error\n");
-    return false;
+    if (recvd) Unpack(data, processedPackets_);
+    else return false;
   }
 
-  // [optional] set to non-blocking
-  //u_long iMode=1;
-  //ioctlsocket(CommandSocket,FIONBIO,&iMode);
+  // Request current model descriptions from server (sRigidBodyDescription)
+  {
+    sPacket pkt{};
+    pkt.iMessage = NAT_REQUEST_MODELDEF;
+    pkt.nDataBytes = 0;
+    const size_t pktlen = pkt.nDataBytes + 4;
 
-  // create a 1MB buffer
-  setsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
-  getsockopt(CommandSocket, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
-  if (optval != 0x100000) {
-    printf("[CommandSocket] ReceiveBuffer size = %d\n", optval);
-    return false;
+    bool sent = cmdsock_->send(serverIP_, commandPort_, (char *)&pkt, pktlen);
+
+    if (!sent) return false;
   }
 
-  // set a receive timeout
-  struct timeval timeout = { .tv_sec = 1, .tv_usec = 0 };
-  retval = setsockopt(CommandSocket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout));
-  if (retval == -1) {
-    close(CommandSocket);
-    printf("Error while setting CommandSocket timeout\n");
-    return false;
+  // Receive one chunk of command response (sRigidBodyDescription --- name)
+  {
+    char data[MAX_PACKETSIZE];
+    bool recvd = cmdsock_->receive(data, sizeof(data));
+
+    if (recvd) Unpack(data, processedPackets_);
+    else return false;
   }
 
-  //
-  // Create data socket
-  //
+  return true;
+}
 
-  if ((dataSock_ = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-    printf("Error while opening DataSocket\n");
-    return false;
-  }
+// ----------------------------------------------------------------------------
+// Private Methods
+// ----------------------------------------------------------------------------
 
-  // allow multiple clients on same machine to use address/port
-  int value = 1;
-  retval = setsockopt(dataSock_, SOL_SOCKET, SO_REUSEADDR, (char *) &value, sizeof(value));
-  if (retval == -1) {
-    close(dataSock_);
-    printf("Error while setting DataSocket options\n");
-    return false;
-  }
+bool OptiTrackClient::getServerInfo(sSender_Server& serverInfo)
+{
+  constexpr int MAX_NUM_TRIES = 3;
 
-  struct sockaddr_in dataSockAddr{};
-  dataSockAddr.sin_family = AF_INET;
-  dataSockAddr.sin_port = htons(PORT_DATA);
-  dataSockAddr.sin_addr.s_addr = htonl(INADDR_ANY); // bind to all local ifaces
-  if (bind(dataSock_, (struct sockaddr *) &dataSockAddr, sizeof(struct sockaddr)) == -1) {
-    close(dataSock_);
-    printf("DataSocket bind failed\n");
-    return false;
-  }
+  // attempt to send the connection request to the server nrTries times.
+  int nrTries = MAX_NUM_TRIES;
+  while (nrTries--) {
 
-  // Join multicast group
-  struct ip_mreq Mreq{};
-  Mreq.imr_multiaddr.s_addr = inet_addr(MULTICAST_ADDRESS);
-  Mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-  retval = setsockopt(dataSock_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *) &Mreq, sizeof(Mreq));
-  if (retval == -1) {
-    printf("DataSocket join failed\n");
-    return false;
-  }
+    //
+    // send a message through the socket (non-blocking)
+    // 
 
-  // create a 1MB buffer
-  setsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, 4);
-  getsockopt(dataSock_, SOL_SOCKET, SO_RCVBUF, (char *)&optval, &optval_size);
-  if (optval != 0x100000) {
-    printf("[DataSocket] ReceiveBuffer size = %d\n", optval);
-    return false;
-  }
-  
-  //
-  // Send command to the server
-  //
+    {
+      // n.b.: the 4 is the size of the packet "header" (iMessage + nDataBytes)
+      // and the nDataBytes is the actual size of the payload
+      // create a packet with a connection request message
+      sPacket pkt{};
+      pkt.iMessage = NAT_CONNECT;
+      pkt.nDataBytes = 0;
+      const size_t pktlen = pkt.nDataBytes + 4;
 
-  // server address
-  memset(&HostAddr, 0, sizeof(HostAddr));
-  HostAddr.sin_family = AF_INET;
-  HostAddr.sin_port = htons(PORT_COMMAND);
-  HostAddr.sin_addr.s_addr = inet_addr(server_address);
-
-  // send initial connect request
-  agile::sPacket PacketOut{};
-  PacketOut.iMessage = NAT_CONNECT;
-  PacketOut.nDataBytes = 0;
-  int nTries = 3;
-  while (nTries--) {
-    ssize_t ret = sendto(CommandSocket,
-                        (char *)&PacketOut,
-                        4 + PacketOut.nDataBytes,
-                        0,
-                        (sockaddr *)&HostAddr,
-                        sizeof(HostAddr));
-    if (ret == -1) {
-      close(CommandSocket);
-      printf("[CommandSocket] Failed to send NAT_CONNECT to OptiTrack server.\n");
-      return false;
+      bool sent = cmdsock_->send(serverIP_, commandPort_, (char *)&pkt, pktlen);
+      if (!sent) return false;
     }
-    
-    printf("Attempting to connect to OptiTrack server...\n");
 
-    // Wait for server response. 
-    // This will contain the server tick frequency.
-    char ip_as_str[INET_ADDRSTRLEN];
-    sockaddr_in remoteAddr{};
-    agile::sPacket PacketIn{};
-    socklen_t addrlen = sizeof(struct sockaddr);
-    ssize_t nBytesRecvd = recvfrom(CommandSocket,
-                                  (char *)&PacketIn,
-                                  sizeof(agile::sPacket),
-                                  0,
-                                  (struct sockaddr *)&remoteAddr,
-                                  &addrlen);
+    std::cout << "[OptiTrackClient] Attempting to connect "
+                 "to OptiTrack server..." << std::flush;
 
-    if (nBytesRecvd == -1) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        printf("[CommandSocket] Timed out waiting for OptiTrack response.\n");
+    {
+      sPacket pkt{};
+
+      // wait (with timeout) for server response
+      bool recvd = cmdsock_->receive((char *)&pkt, sizeof(pkt));
+
+      if (!recvd) {
+        std::cout << "timed out." << std::endl;
         continue;
+      } else {
+        std::cout << "done!" << std::endl;
       }
+
+      // TODO: not sure why I can't just use the union def inside sPacket...
+      unsigned char *ptr = (unsigned char *) &pkt;
+      agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
+      serverInfo = *server_info;
+
+      // TODO: broken?
+      // std::cout << "NatNet version: " << server_info->Common.NatNetVersion[0] << "."
+      //                                 << server_info->Common.NatNetVersion[1] << "."
+      //                                 << server_info->Common.NatNetVersion[2] << "."
+      //                                 << server_info->Common.NatNetVersion[3] << std::endl;
+      
+      // serverInfo = pkt.Data.SenderServer;
     }
 
-    // debug - print message
-    inet_ntop(AF_INET, &(remoteAddr.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-    printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
-          ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
-
-    unsigned char *ptr = (unsigned char *) &PacketIn;
-    agile::sSender_Server *server_info = (agile::sSender_Server *) (ptr + 4);
-
-    std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
-    server_frequency = server_info->HighResClockFrequency;
-    
     return true;
   }
 
-  printf("Initial connect request failed\n");
+  // number of tries exceeded
   return false;
 }
 
-// ============================== Data mode ================================ //
-// Funtion that assigns a time code values to 5 variables passed as arguments
-// Requires an integer from the packet as the timecode and timecodeSubframe
-bool motionCaptureClientFramework::DecodeTimecode(unsigned int inTimecode,
-                    unsigned int inTimecodeSubframe,
-                    int *hour,
-                    int *minute,
-                    int *second,
-                    int *frame,
-                    int *subframe) {
-  bool bValid = true;
+// ----------------------------------------------------------------------------
 
-  *hour = (inTimecode >> 24) & 255;
-  *minute = (inTimecode >> 16) & 255;
-  *second = (inTimecode >> 8) & 255;
-  *frame = inTimecode & 255;
-  *subframe = inTimecodeSubframe;
-
-  return bValid;
+uint64_t OptiTrackClient::getTimestamp()
+{
+  return std::chrono::high_resolution_clock::now().time_since_epoch() / std::chrono::nanoseconds(1);
 }
 
-// Takes timecode and assigns it to a string
-bool motionCaptureClientFramework::TimecodeStringify(unsigned int inTimecode,
-                       unsigned int inTimecodeSubframe,
-                       char *Buffer,
-                       size_t BufferSize) {
-  bool bValid;
-  int hour, minute, second, frame, subframe;
-  bValid = DecodeTimecode(inTimecode,
-                          inTimecodeSubframe,
-                          &hour,
-                          &minute,
-                          &second,
-                          &frame,
-                          &subframe);
+// ----------------------------------------------------------------------------
 
-  snprintf(Buffer, BufferSize, "%2d:%2d:%2d:%2d.%d",
-           hour, minute, second, frame, subframe);
-  for (unsigned int i = 0; i < strlen(Buffer); i++)
-    if (Buffer[i] == ' ')
-      Buffer[i] = '0';
-
-  return bValid;
-}
-
-void motionCaptureClientFramework::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID) {
-  if (pOutEntityID)
-    *pOutEntityID = sourceID >> 16;
-
-  if (pOutMemberID)
-    *pOutMemberID = sourceID & 0x0000ffff;
-}
-
-// Data listener thread. Listens for incoming bytes from NatNet
-void motionCaptureClientFramework::getDataPacket() {
-  char szData[20000];
-  socklen_t addr_len = sizeof(struct sockaddr);
-  sockaddr_in TheirAddress{};
-
-  // Block until we receive a datagram from the network
-  // (from anyone including ourselves)
-  //ssize_t nDataBytesReceived =
-  recvfrom(dataSock_,
-           szData,
-           sizeof(szData),
-           0,
-           (sockaddr *) &TheirAddress,
-           &addr_len);
-  // Once we have bytes recieved Unpack organizes all the data
-  //
-  // Clear vector of previous packets.
-  processedPackets_.clear();
-  Unpack(szData, processedPackets_);
-
-  /*if (outputs.size() > 0) {
-      PublishPacketRos(outputs[0]);
-    }*/
-}
-
-
-void motionCaptureClientFramework::getCommandPacket() {
-    agile::sPacket PacketOut{};
-    PacketOut.iMessage = NAT_REQUEST_MODELDEF;  //NAT_FRAMEOFDATA;     //NAT_REQUEST_MODELDEF;
-    PacketOut.nDataBytes = 0;
-    ssize_t iRet = sendto(CommandSocket,
-                        (char *) &PacketOut,
-                        4 + PacketOut.nDataBytes,
-                        0,
-                        (sockaddr *) &HostAddr,
-                        sizeof(HostAddr));
-      // Wait for server response. 
-      // This will contain the server tick frequency.
-    char ip_as_str[INET_ADDRSTRLEN];
-    ssize_t nDataBytesReceived;
-    sockaddr_in TheirAddress{};
-    agile::sPacket PacketIn{};
-    socklen_t addr_len = sizeof(struct sockaddr);
-    char szData[20000]; //@Todo: this value is hard-coded
-    nDataBytesReceived = recvfrom(CommandSocket,
-                                    szData,
-                                    sizeof(szData),
-                                    0,
-                                    (struct sockaddr *) &TheirAddress,
-                                    &addr_len);
-
-      // debug - print message
-      
-/*      inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-      printf("[Client] Received command from %s: iMessage=%d, nDataBytes=%d\n",
-            ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);*/
-      // processedPackets_.clear();
-      Unpack(szData, processedPackets_);
-}
-
-
-
-// ============================= Command mode ============================== //
-// Send a command to Motive.
-int motionCaptureClientFramework::SendCommand(char *szCommand) {
-  // reset global result
-  gCommandResponse = -1;
-
-  // format command packet
-  sPacket commandPacket{};
-  strcpy(commandPacket.Data.szData, szCommand);
-  commandPacket.iMessage = NAT_REQUEST;
-  commandPacket.nDataBytes =
-      (unsigned short) (strlen(commandPacket.Data.szData) + 1);
-
-  // send command and wait (a bit)
-  // for command response to set global response var in CommandListenThread
-  ssize_t iRet = sendto(CommandSocket,
-                        (char *) &commandPacket,
-                        4 + commandPacket.nDataBytes,
-                        0,
-                        (sockaddr *) &HostAddr,
-                        sizeof(HostAddr));
-  if (iRet == -1) {
-    printf("Socket error sending command");
-  } else {
-    int waitTries = 5;
-    while (waitTries--) {
-      if (gCommandResponse != -1)
-        break;
-      std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    }
-
-    if (gCommandResponse == -1) {
-      printf("Command response not received (timeout)");
-    } else if (gCommandResponse == 0) {
-      printf("Command response received with success");
-    } else if (gCommandResponse > 0) {
-      printf("Command response received with errors");
-    }
-  }
-
-  return gCommandResponse;
-}
-
-void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outputs) {
+void OptiTrackClient::Unpack(char *pData, std::vector<Packet> &outputs) {
   // Checks for NatNet Version number. Used later in function.
   // Packets may be different depending on NatNet version.
-  int major = NatNetVersion[0];
-  int minor = NatNetVersion[1];
+  // TODO: Check 'getServerInformation' about why this is hard coded
+  int major = 3; // serverInfo_.Common.NatNetVersion[0];
+  int minor = 1; // serverInfo_.Common.NatNetVersion[1];
 
   char *ptr = pData;
 
@@ -544,7 +386,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
         bool bTrackingValid = params & 0x01;
 
         // todo make this an int so it's obvious when it's unset
-        output_packet_.tracking_valid = true;
+        output_packet_.tracking_valid = bTrackingValid;
         if (bTrackingValid) {
           // printf("Tracking Valid: True\n");
         } else {
@@ -870,7 +712,9 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       timestamp = (double) fTemp;
     }
 
-    // Convert to microseconds
+    const uint64_t server_frequency = serverInfo_.HighResClockFrequency;
+
+    // Convert to microseconds: timestamp since software start
     uint64_t ms_timestamp = (timestamp*1e9)/server_frequency;
     // printf("Timestamp : %3.3f\n", timestamp);
 
@@ -938,8 +782,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
       if(print_info)
       printf("Type : %d\n", type);
 
-      if (type == 0)   // markerset
-      {
+      if (type == 0) {   // markerset
         // name
         char szName[256];
         strcpy(szName, ptr);
@@ -963,8 +806,7 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
           if(print_info)
           printf("Marker Name: %s\n", szName);
         }
-      } else if (type == 1)   // rigid body
-      {
+      } else if (type == 1) {  // rigid body
         char szName[MAX_NAMELENGTH];  
         if (major >= 2) {
           // name
@@ -1123,156 +965,56 @@ void motionCaptureClientFramework::Unpack(char *pData, std::vector<Packet> &outp
 
 }
 
-int motionCaptureClientFramework::CreateCommandSocket(in_addr_t IP_Address, unsigned short uPort) {
-  static unsigned long ivalue;
-  static unsigned long bFlag;
-  int nlengthofsztemp = 64;
-  int sockfd;
+// ----------------------------------------------------------------------------
 
-  // Create a blocking, datagram socket
-  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-    return -1;
-    printf("Error while opening CommandSocket\n");
-  }
+// Funtion that assigns a time code values to 5 variables passed as arguments
+// Requires an integer from the packet as the timecode and timecodeSubframe
+bool OptiTrackClient::DecodeTimecode(unsigned int inTimecode,
+                                     unsigned int inTimecodeSubframe,
+                                     int *hour, int *minute, int *second,
+                                     int *frame, int *subframe)
+{
+  bool bValid = true;
 
-  // bind socket
-  struct sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(uPort);
-  addr.sin_addr.s_addr = IP_Address;
-  if (bind(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr)) == -1) {
-    close(sockfd);
-    printf("CommandSocket bind failed!\n");
-    return -1;
-  }
+  *hour = (inTimecode >> 24) & 255;
+  *minute = (inTimecode >> 16) & 255;
+  *second = (inTimecode >> 8) & 255;
+  *frame = inTimecode & 255;
+  *subframe = inTimecodeSubframe;
 
-  // set to broadcast mode
-  ivalue = 1;
-  if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, (char *)&ivalue, sizeof(ivalue)) == -1) {
-    close(sockfd);
-    printf("Error while setting CommandSocket options\n");
-    return -1;
-  }
-
-  return sockfd;
+  return bValid;
 }
 
-// Command response listener thread
-void motionCaptureClientFramework::CommandListenThread() {
-  char ip_as_str[INET_ADDRSTRLEN];
-  ssize_t nDataBytesReceived;
-  sockaddr_in TheirAddress{};
-  sPacket PacketIn{};
-  socklen_t addr_len = sizeof(struct sockaddr);
+// ----------------------------------------------------------------------------
 
-  while (true) {
-    // blocking
-    nDataBytesReceived = recvfrom(CommandSocket,
-                                  (char *)&PacketIn,
-                                  sizeof(sPacket),
-                                  0,
-                                  (struct sockaddr *)&TheirAddress,
-                                  &addr_len);
+// Takes timecode and assigns it to a string
+bool OptiTrackClient::TimecodeStringify(unsigned int inTimecode,
+                                        unsigned int inTimecodeSubframe,
+                                        char *Buffer, size_t BufferSize)
+{
+  bool bValid = false;
+  int hour, minute, second, frame, subframe;
+  bValid = DecodeTimecode(inTimecode, inTimecodeSubframe,
+                          &hour, &minute, &second, &frame, &subframe);
 
-    if ((nDataBytesReceived == 0) || (nDataBytesReceived == -1))
-      continue;
+  snprintf(Buffer, BufferSize, "%2d:%2d:%2d:%2d.%d",
+           hour, minute, second, frame, subframe);
+  for (unsigned int i=0; i<strlen(Buffer); i++)
+    if (Buffer[i] == ' ')
+      Buffer[i] = '0';
 
-    // debug - print message
-    inet_ntop(AF_INET, &(TheirAddress.sin_addr), ip_as_str, INET_ADDRSTRLEN);
-    printf("[Client] Received command from %s: Command=%d, nDataBytes=%d\n",
-           ip_as_str, (int) PacketIn.iMessage, (int) PacketIn.nDataBytes);
-
-    unsigned char *ptr = (unsigned char *) &PacketIn;
-    sSender_Server *server_info = (sSender_Server *) (ptr + 4);
-
-    std::cout << "server tick frequency: " << server_info->HighResClockFrequency << std::endl;
-
-     std::vector<Packet> outputs;
-
-    // handle command
-    switch (PacketIn.iMessage) {
-      case NAT_MODELDEF:std::cout << "[Client] Received NAT_MODELDEF packet";
-        Unpack((char *) &PacketIn, outputs);
-        break;
-      case NAT_FRAMEOFDATA:
-        std::cout << "[Client] Received NAT_FRAMEOFDATA packet";
-        Unpack((char *) &PacketIn, outputs);
-        break;
-      case NAT_SERVERINFO:
-        // Streaming app's name, e.g., Motive
-        std::cout << server_info->Common.szName << " ";
-        // Streaming app's version, e.g., 2.0.0.0
-        for (int i = 0; i < 4; ++i) {
-          std::cout << static_cast<int>(server_info->Common.Version[i]) << ".";
-        }
-        std::cout << '\b' << std::endl;
-        // Streaming app's NatNet version, e.g., 3.0.0.0
-        std::cout << "NatNet ";
-        int digit;
-        for (int i = 0; i < 4; ++i) {
-          digit = static_cast<int>(server_info->Common.NatNetVersion[i]);
-          std::cout << digit << ".";
-        }
-        std::cout << '\b' << std::endl;
-        // Save versions in global variables
-        for (int i = 0; i < 4; i++) {
-          NatNetVersion[i] = server_info->Common.NatNetVersion[i];
-          ServerVersion[i] = server_info->Common.Version[i];
-        }
-        break;
-      case NAT_RESPONSE:gCommandResponseSize = PacketIn.nDataBytes;
-        if (gCommandResponseSize == 4)
-          memcpy(&gCommandResponse,
-                 &PacketIn.Data.lData[0],
-                 gCommandResponseSize);
-        else {
-          memcpy(&gCommandResponseString[0],
-                 &PacketIn.Data.cData[0],
-                 gCommandResponseSize);
-          printf("Response : %s", gCommandResponseString);
-          gCommandResponse = 0;   // ok
-        }
-        break;
-      case NAT_UNRECOGNIZED_REQUEST:
-        printf("[Client] received 'unrecognized request'\n");
-        gCommandResponseSize = 0;
-        gCommandResponse = 1;       // err
-        break;
-      case NAT_MESSAGESTRING:
-        printf("[Client] Received message: %s\n",
-               PacketIn.Data.szData);
-        break;
-    }
-  }
+  return bValid;
 }
 
-// Convert IP address string to address
-bool motionCaptureClientFramework::IPAddress_StringToAddr(char *szNameOrAddress,
-                            struct in_addr *Address) const{
-  int retVal;
-  struct sockaddr_in saGNI;
-  char hostName[256];
-  char servInfo[256];
-  u_short port;
-  port = 0;
+// ----------------------------------------------------------------------------
 
-  // Set up sockaddr_in structure which is passed to the getnameinfo function
-  saGNI.sin_family = AF_INET;
-  saGNI.sin_addr.s_addr = inet_addr(szNameOrAddress);
-  saGNI.sin_port = htons(port);
+void OptiTrackClient::DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID)
+{
+  if (pOutEntityID)
+    *pOutEntityID = sourceID >> 16;
 
-  // getnameinfo in WS2tcpip is protocol independent
-  // and resolves address to ANSI host name
-  if ((retVal = getnameinfo((sockaddr *) &saGNI, sizeof(sockaddr), hostName,
-                            256, servInfo, 256, NI_NUMERICSERV)) != 0) {
-    // Returns error if getnameinfo failed
-    printf("[PacketClient] GetHostByAddr failed\n");
-    return false;
-  }
-
-  Address->s_addr = saGNI.sin_addr.s_addr;
-  return true;
+  if (pOutMemberID)
+    *pOutMemberID = sourceID & 0x0000ffff;
 }
 
-
-}
+} // ns agile
