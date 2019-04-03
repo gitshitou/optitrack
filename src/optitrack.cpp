@@ -50,7 +50,7 @@ void OptiTrack::spin()
     // allow mocap client to receive optitrack packets
     if (!client_->spinOnce()) {
       if (++lostPackets >= MAX_LOST_PACKETS) {
-        ROS_ERROR_THROTTLE(1, "Could not communicate with OptiTrack server!");
+        ROS_ERROR_THROTTLE(1, "Did not receive data from OptiTrack server! (Are cameras on?)");
       } else {
         ROS_WARN_THROTTLE(1, "Dropped packets.");
       }
