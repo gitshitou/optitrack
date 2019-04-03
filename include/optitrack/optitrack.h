@@ -16,6 +16,7 @@
 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
+#include <std_msgs/Float32.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Pose.h>
 

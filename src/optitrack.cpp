@@ -38,7 +38,8 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
 void OptiTrack::spin()
 {
   // keep track of the various publishers
-  std::map<int, ros::Publisher> rosPublishers;
+  std::map<int, ros::Publisher> pubs_pose_; // pose of each rigid body / model
+  std::map<int, ros::Publisher> pubs_err_;  // tracking residual of each model
 
   // Do some debouncing on the number of lost packets. It is not critical
   // unless many consecutive packets are being dropped.
@@ -69,7 +70,7 @@ void OptiTrack::spin()
       if (!pkt.tracking_valid) continue;
 
       // Initialize publisher for rigid body if not exist.
-      if (rosPublishers.find(pkt.rigid_body_id) == rosPublishers.end()) {
+      if (pubs_pose_.find(pkt.rigid_body_id) == pubs_pose_.end()) {
         // clean model name for ROS topic---only keep alphanumeric chars
         std::string name = pkt.model_name;
         name.erase(std::remove_if(name.begin(), name.end(),
@@ -79,11 +80,15 @@ void OptiTrack::spin()
         ROS_WARN_STREAM("Found '" << name << "'");
 
         std::string topic = "/" + name + "/optitrack";
-        rosPublishers[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);;
+        pubs_pose_[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);
+
+        topic = "/" + name + "/optitrack_residual";
+        pubs_err_[pkt.rigid_body_id] = nh_.advertise<std_msgs::Float32>(topic, 1);
       }
 
       // Get saved publisher and last state
-      ros::Publisher publisher = rosPublishers[pkt.rigid_body_id];
+      ros::Publisher pubPose = pubs_pose_[pkt.rigid_body_id];
+      ros::Publisher pubErr = pubs_err_[pkt.rigid_body_id];
 
       // estimate the windows to linux transmit time
       int64_t offset = pkt.transmit_timestamp - pkt.receive_timestamp;
@@ -103,7 +108,12 @@ void OptiTrack::spin()
       // @TODO since the state message does not understand marker locations.
 
       // Publish ROS state.
-      publisher.publish(currentState);
+      pubPose.publish(currentState);
+
+      // publish tracking residual
+      std_msgs::Float32 msg;
+      msg.data = pkt.mean_marker_error;
+      pubErr.publish(msg);
     }
   }
 }

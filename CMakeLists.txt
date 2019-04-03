@@ -17,6 +17,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2
   tf2_geometry_msgs
   geometry_msgs
+  std_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -110,7 +111,7 @@ find_package(Eigen3 REQUIRED NO_MODULE)
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES optitrack_client
- CATKIN_DEPENDS roscpp tf2 tf2_geometry_msgs geometry_msgs
+ CATKIN_DEPENDS roscpp tf2 tf2_geometry_msgs geometry_msgs std_msgs
 #  DEPENDS system_lib
 )
 
