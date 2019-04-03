@@ -36,10 +36,7 @@ OptiTrackClient::OptiTrackClient(const std::string& localIP,
                                  const int commandPort,
                                  const int dataPort)
 : localIP_(localIP), serverIP_(serverIP), multicastIP_(multicastGroupIP),
-  commandPort_(commandPort), dataPort_(dataPort)
-{
-
-}
+  commandPort_(commandPort), dataPort_(dataPort) {}
 
 // ----------------------------------------------------------------------------
 

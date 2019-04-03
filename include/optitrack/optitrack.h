@@ -30,6 +30,9 @@ namespace optitrack {
     OptiTrack(const ros::NodeHandle nh);
     ~OptiTrack() = default;
 
+    /**
+     * @brief      Handle any new data from the OptiTrack server.
+     */
     void spin();
     
   private:
@@ -53,6 +56,17 @@ namespace optitrack {
      */
     geometry_msgs::Pose toENUPose(const double* p, const double* q);
 
+    /**
+     * @brief      Low pass filter the transfer time (i.e., the time offset
+     *             between windows and linux) as a cheap outlier rejection
+     *             method. NOTE: This method can only be used for one signal
+     *             because it contains persistent state.
+     *
+     * @param[in]  alpha  0 trusts measurements, 1 trusts model
+     * @param[in]  x      the new measurement
+     *
+     * @return     the filtered measurement
+     */
     int64_t nanotimeLPF(double alpha, int64_t x);
   };
 

@@ -116,22 +116,52 @@ namespace agile {
     uint64_t mid_exposure_timestamp;
     uint64_t camera_data_received_timestamp;
     uint64_t transmit_timestamp;
-    // Calculated on receive.
-    uint64_t receive_timestamp;
+    uint64_t receive_timestamp; // calculated on receive
   };
 
   class OptiTrackClient
   {
     public:
+        /**
+         * @brief      Constructs the object.
+         *
+         * @param[in]  localIP           The local ip (for commands)
+         * @param[in]  serverIP          The server ip (for commands)
+         * @param[in]  multicastGroupIP  The multicast group ip (for rigid body data)
+         * @param[in]  commandPort       The command port (for commands, server side)
+         * @param[in]  dataPort          The multicast data port (for rigid body data, client/server side)
+         */
       OptiTrackClient(const std::string& localIP, const std::string& serverIP,
                       const std::string& multicastGroupIP,
                       const int commandPort, const int dataPort);
 
-      // Starts connection to mocap and initializes settings.
+      /**
+       * @brief      Initialize the sockets for communicating with Motive server
+       *
+       * @return     false if unsuccessful
+       */
       bool initConnection();
 
+      /**
+       * @brief      Allow time for checking for command and rigid body data.
+       *
+       *             Three things happen:
+       *                1) Check data socket for any rigid body packets
+       *                2) Send a request via the command socket for all
+       *                   model definitions (i.e., the model name)
+       *                3) Wait (with timeout) to receive model descriptions.
+       *
+       * @return     false if unsuccessful (e.g., no packets received. This
+       *             could indicate that the server is down or there is
+       *             high network traffic.)
+       */
       bool spinOnce();
 
+      /**
+       * @brief      Returns any packets received and processed after spinning.
+       *
+       * @return     The packets.
+       */
       std::vector<Packet> getPackets() const { return processedPackets_; }
 
     private:
@@ -142,17 +172,38 @@ namespace agile {
       const int dataPort_;            ///< Port used for multicast data from server
 
       std::unique_ptr<acl::utils::UDPSocket> datasock_; ///< UDP/Multicast socket for data
-      std::unique_ptr<acl::utils::UDPSocket> cmdsock_; ///< UDP socket for commands
+      std::unique_ptr<acl::utils::UDPSocket> cmdsock_;  ///< UDP socket for commands
 
       sSender_Server serverInfo_; ///< The response of the inital connection request.    
 
+      /**
+       * @brief      Requests (via command socket) server info
+       *
+       * @param      serverInfo  The server information
+       *
+       * @return     false if unsuccessful
+       */
+      bool getServerInfo(sSender_Server& serverInfo);
+
+      /**
+       * @brief      Gets the current time as seconds since the UNIX epoch.
+       *
+       * @return     The timestamp.
+       */
+      uint64_t getTimestamp();
+
+      /**
+       * @brief      Processes raw data into packets that can be easily handled
+       *
+       * @param      pData    The data received by a command / data socket
+       * @param      outputs  Processes packets
+       */
+      void Unpack(char *pData, std::vector<Packet>& outputs);
+
       bool DecodeTimecode(unsigned int inTimecode,
                       unsigned int inTimecodeSubframe,
-                      int *hour,
-                      int *minute,
-                      int *second,
-                      int *frame,
-                      int *subframe);
+                      int *hour, int *minute, int *second,
+                      int *frame, int *subframe);
 
       // Takes timecode and assigns it to a string
       bool TimecodeStringify(unsigned int inTimecode,
@@ -162,13 +213,9 @@ namespace agile {
 
       void DecodeMarkerID(int sourceID, int *pOutEntityID, int *pOutMemberID);
 
-      void Unpack(char *pData, std::vector<Packet> &outputs);
-
-      bool getServerInfo(sSender_Server& serverInfo);
-
-      uint64_t getTimestamp();
-
-      std::unordered_map<int, std::string> rigid_body_map;
+      std::unordered_map<int, std::string> rigid_body_map; ///< Used to convert
+                                                           ///< rigid body ID
+                                                           ///< to model name
 
       std::vector<Packet> processedPackets_;
       Packet output_packet_;

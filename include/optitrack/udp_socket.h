@@ -42,13 +42,79 @@ namespace utils {
   class UDPSocket
   {
   public:
+    /**
+     * @brief      Binds a socket to a local UDP endpoint described by a
+     *             specific IP address and port.
+     *
+     *             Use other constructor to bind to any interface.
+     *             Use localPort = 0 to have kernel decide which port
+     *             to bind to.
+     *
+     * @param[in]  localIP    The local ip
+     * @param[in]  localPort  The local port
+     */
     UDPSocket(const std::string& localIP, const int localPort);
+
+    /**
+     * @brief      Binds a socket to a local UDP endpoint on any address
+     *             and on a specific port
+     *
+     *             IP address 0.0.0.0 is used to bind on any interface/address.
+     *             Use localPort = 0 to have the kernel decide with port
+     *             to bind to.
+     *
+     *             NOTE: Use this constructor when joining a multicast group,
+     *             otherwise data cannot be received via this socket.
+     *
+     * @param[in]  localPort  The local port
+     */
     UDPSocket(const int localPort);
+
+    /**
+     * @brief      Destroys the object.
+     */
     ~UDPSocket();
 
+    /**
+     * @brief      Allow the blocking 'receive' method to timeout
+     *
+     * @param[in]  seconds  The seconds (int)
+     * @param[in]  micros   The microseconds (int)
+     *
+     * @return     false if unsuccessful
+     */
     bool setReceiveTimeout(const int seconds = 1, const int micros = 0);
+
+    /**
+     * @brief      Joins the socket to a Multicast group
+     *
+     * @param[in]  multicastGroupIP  The multicast group ip
+     *
+     * @return     false if unsuccessful
+     */
     bool joinMulticastGroup(const std::string& multicastGroupIP);
+
+    /**
+     * @brief      Receives data transmitted to the UDP endpoint.
+     *             This is a blocking call.
+     *
+     * @param      buf     The buffer to store the received data
+     * @param[in]  buflen  The buffer size
+     *
+     * @return     false if unsuccessful (e.g., on timeout)
+     */
     bool receive(char * buf, size_t buflen);
+
+    /**
+     * @brief      Send data through the UDP endpoint to a remote host.
+     *
+     * @param[in]  remoteIP    The remote host IP
+     * @param[in]  remotePort  The remote host port
+     * @param[in]  buf         The buffer of data to send
+     * @param[in]  buflen      THe buffer size
+     *
+     * @return     false if unsuccessful
+     */
     bool send(const std::string& remoteIP, const int remotePort,
               const char * buf, const size_t buflen);
 
