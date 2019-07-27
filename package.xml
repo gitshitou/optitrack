@@ -7,7 +7,7 @@
   <maintainer email="plusk@mit.edu">Parker Lusk</maintainer>
   <license>MIT</license>
 
-  <url type="repository">https://github.com/acl-mit/optitrack</url>
+  <url type="repository">https://github.com/mit-acl/optitrack</url>
 
   <author email="winterg@mit.edu">Winter Guerra</author>
 
@@ -17,6 +17,7 @@
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
   
   <!-- The export tag contains other, unspecified, tags -->
   <export>

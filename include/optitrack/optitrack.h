@@ -16,6 +16,7 @@
 
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
+#include <std_msgs/Float32.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/Pose.h>
 
@@ -43,6 +44,7 @@ namespace optitrack {
     std::string multicastIP_; ///< Multicast group (for UDP data)
     int commandPort_;         ///< Port used for sending cmds to server
     int dataPort_;            ///< Port used for multicast data from server
+    bool pubResiduals_;       ///< Publish rigid body residual (quality metric)
 
     std::unique_ptr<agile::OptiTrackClient> client_;
 
