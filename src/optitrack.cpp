@@ -19,6 +19,7 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
   nh.getParam("command_port", commandPort_);
   nh.getParam("data_port", dataPort_);
   nh.getParam("pub_residuals", pubResiduals_);
+  nh.param<std::string>("topic_subname", topicSubname_, "world");
 
   client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_, multicastIP_, commandPort_, dataPort_);
 
@@ -80,7 +81,7 @@ void OptiTrack::spin()
 
         ROS_WARN_STREAM("Found '" << name << "'");
 
-        std::string topic = "/" + name + "/optitrack";
+        std::string topic = "/" + name + "/" + topicSubname_;
         pubs_pose_[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);
 
         if (pubResiduals_) {
@@ -102,6 +103,7 @@ void OptiTrack::spin()
 
       // Add timestamp
       geometry_msgs::PoseStamped currentState;
+      currentState.header.frame_id = "optitrack";
       currentState.header.stamp = ros::Time(packet_ntime/1e9, packet_ntime%(int64_t)1e9);
 
       // convert from raw optitrack frame to ENU with body flu

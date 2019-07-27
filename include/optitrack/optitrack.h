@@ -42,6 +42,7 @@ namespace optitrack {
     std::string localIP_;     ///< IP addr of local NIC to use.
     std::string serverIP_;    ///< IP addr of server (for commands)
     std::string multicastIP_; ///< Multicast group (for UDP data)
+    std::string topicSubname_;///< /<veh>/<subname>: used for remapping
     int commandPort_;         ///< Port used for sending cmds to server
     int dataPort_;            ///< Port used for multicast data from server
     bool pubResiduals_;       ///< Publish rigid body residual (quality metric)
