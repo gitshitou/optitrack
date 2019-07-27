@@ -18,6 +18,7 @@ OptiTrack::OptiTrack(const ros::NodeHandle nh)
   nh.getParam("multicast_group", multicastIP_);
   nh.getParam("command_port", commandPort_);
   nh.getParam("data_port", dataPort_);
+  nh.getParam("pub_residuals", pubResiduals_);
 
   client_ = std::make_unique<agile::OptiTrackClient>(localIP_, serverIP_, multicastIP_, commandPort_, dataPort_);
 
@@ -82,8 +83,10 @@ void OptiTrack::spin()
         std::string topic = "/" + name + "/optitrack";
         pubs_pose_[pkt.rigid_body_id] = nh_.advertise<geometry_msgs::PoseStamped>(topic, 1);
 
-        topic = "/" + name + "/optitrack_residual";
-        pubs_err_[pkt.rigid_body_id] = nh_.advertise<std_msgs::Float32>(topic, 1);
+        if (pubResiduals_) {
+          topic = "/" + name + "/optitrack_residual";
+          pubs_err_[pkt.rigid_body_id] = nh_.advertise<std_msgs::Float32>(topic, 1);
+        }
       }
 
       // Get saved publisher and last state
@@ -111,9 +114,11 @@ void OptiTrack::spin()
       pubPose.publish(currentState);
 
       // publish tracking residual
-      std_msgs::Float32 msg;
-      msg.data = pkt.mean_marker_error;
-      pubErr.publish(msg);
+      if (pubResiduals_) {
+        std_msgs::Float32 msg;
+        msg.data = pkt.mean_marker_error;
+        pubErr.publish(msg);
+      }
     }
   }
 }
